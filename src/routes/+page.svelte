@@ -1,4 +1,4 @@
-<!-- Buddy List placeholder: a plain-text list until step 2.3. -->
+<!-- The Buddy List: the main window. -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { describe, watchSyncStatus, type SyncStatus } from "$lib/sync";
@@ -7,12 +7,22 @@
   let userId = $state<string | null>(null);
   let status = $state<SyncStatus>({ state: "connecting" });
   let buddies = $state<Buddy[]>([]);
+  let selected = $state<string | null>(null);
   let busy = $state(false);
   let error = $state("");
 
   invoke<string | null>("whoami").then((id) => (userId = id));
   $effect(() => watchSyncStatus((s) => (status = s)));
   $effect(() => watchBuddyList((b) => (buddies = b)));
+
+  // Invitations only show up when there are some.
+  const groups = $derived(
+    SECTIONS.map(([section, title]) => ({
+      section,
+      title,
+      rooms: buddies.filter((b) => b.section === section),
+    })).filter((g) => g.section !== "invitations" || g.rooms.length > 0),
+  );
 
   async function signOff() {
     busy = true;
@@ -29,27 +39,38 @@
 
 <div class="layout">
   <main class="aim-window__body">
-    <p>Signed on as {userId ?? "…"}</p>
-    <div class="rooms">
-      {#each SECTIONS as [section, title] (section)}
-        {@const rooms = buddies.filter((b) => b.section === section)}
-        <p>{title} ({rooms.length})</p>
-        <ul>
-          {#each rooms as room (room.roomId)}
-            <li>{room.name}{room.kind === "group" ? " [chat]" : ""}</li>
-          {/each}
-        </ul>
+    <div class="aim-panel">
+      <!-- Keyed by section so a list update keeps each group's open state. -->
+      {#each groups as group (group.section)}
+        <details class="aim-group" open>
+          <summary>
+            {group.title} <span class="aim-group__count">({group.rooms.length})</span>
+          </summary>
+          <ul class="aim-list">
+            {#each group.rooms as room (room.roomId)}
+              <li>
+                <button
+                  class="aim-list__item"
+                  class:is-selected={room.roomId === selected}
+                  onclick={() => (selected = room.roomId)}
+                >
+                  {room.name}
+                </button>
+              </li>
+            {/each}
+          </ul>
+        </details>
       {/each}
     </div>
     {#if error}
       <p class="aim-alert" role="alert">{error}</p>
     {/if}
-    <div>
+    <div class="buttons">
       <button class="aim-btn" onclick={signOff} disabled={busy}>Sign Off</button>
+      {#if import.meta.env.DEV}
+        <a href="/demo">Style demo</a>
+      {/if}
     </div>
-    {#if import.meta.env.DEV}
-      <p><a href="/demo">Style demo</a></p>
-    {/if}
   </main>
   <footer class="aim-statusbar">
     <span
@@ -59,6 +80,7 @@
     >
       {describe(status)}
     </span>
+    <span class="aim-statusbar__section aim-statusbar__section--fit">{userId ?? ""}</span>
   </footer>
 </div>
 
@@ -71,12 +93,9 @@
   p {
     margin: 0;
   }
-  .rooms {
-    flex: 1;
-    overflow: auto;
-  }
-  ul {
-    margin: 0 0 4px;
-    padding-left: 16px;
+  .buttons {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
   }
 </style>

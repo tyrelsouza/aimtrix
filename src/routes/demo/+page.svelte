@@ -70,27 +70,27 @@
         <details class="aim-group" open>
           <summary>Favorites <span class="aim-group__count">(1/1)</span></summary>
           <ul class="aim-list">
-            <li class="aim-list__item"><img class="aim-list__icon" src={chat} alt="" />Test Chat</li>
+            <li><button class="aim-list__item"><img class="aim-list__icon" src={chat} alt="" />Test Chat</button></li>
           </ul>
         </details>
         <details class="aim-group" open>
           <summary>Buddies <span class="aim-group__count">(2/3)</span></summary>
           <ul class="aim-list">
-            <li class="aim-list__item is-selected is-unread"><img class="aim-list__icon" src={bob} alt="" />Bob Brown</li>
-            <li class="aim-list__item is-away"><img class="aim-list__icon" src={none} alt="" />Carol Chen</li>
-            <li class="aim-list__item is-offline"><img class="aim-list__icon" src={none} alt="" />Dave (offline)</li>
+            <li><button class="aim-list__item is-selected is-unread"><img class="aim-list__icon" src={bob} alt="" />Bob Brown</button></li>
+            <li><button class="aim-list__item is-away"><img class="aim-list__icon" src={none} alt="" />Carol Chen</button></li>
+            <li><button class="aim-list__item is-offline"><img class="aim-list__icon" src={none} alt="" />Dave (offline)</button></li>
           </ul>
         </details>
         <details class="aim-group" open>
           <summary>Chats <span class="aim-group__count">(1)</span></summary>
           <ul class="aim-list">
-            <li class="aim-list__item is-unread"><img class="aim-list__icon" src={none} alt="" />Secret Chat</li>
+            <li><button class="aim-list__item is-unread"><img class="aim-list__icon" src={none} alt="" />Secret Chat</button></li>
           </ul>
         </details>
         <details class="aim-group">
           <summary>Invitations <span class="aim-group__count">(1)</span></summary>
           <ul class="aim-list">
-            <li class="aim-list__item">Invite Test</li>
+            <li><button class="aim-list__item">Invite Test</button></li>
           </ul>
         </details>
       </div>
