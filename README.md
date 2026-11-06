@@ -4,7 +4,7 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 
 > AIMtrix recreates AIM's *style* only. It isn't affiliated with AOL, and all its art and sounds are original.
 
-**Status:** early and in progress (version 0.1.0). It's a desktop app built with Tauri, developed and tested on Linux. There are no packages yet; build it from source. Progress is tracked step by step in [`PLAN.md`](PLAN.md), and [`CHANGELOG.md`](CHANGELOG.md) says what each step added.
+**Status:** early and in progress (test builds are numbered 0.0.1-…). It's a desktop app built with Tauri, developed and tested on Linux, with `.deb` and `.AppImage` packages for Ubuntu 22.04, Debian 12 and newer. Progress is tracked step by step in [`PLAN.md`](PLAN.md), and [`CHANGELOG.md`](CHANGELOG.md) says what each step added.
 
 ## What works
 
@@ -30,7 +30,7 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 - Emoji verification works against your other sessions.
 - Accounts without recovery can set it up.
 
-Coming next (see `PLAN.md`): Linux packages; then other server software, matrix.org testing and browser (OAuth) sign-on; macOS and Windows; and last, original sounds with mute.
+Coming next (see `PLAN.md`): other server software, matrix.org testing and browser (OAuth) sign-on; macOS and Windows; and last, original sounds with mute.
 
 What counts as a DM: a room listed in `m.direct`, or one with at most two members. Tag a room `aimtrix.chat` to make it open as a Chat Room anyway.
 
@@ -44,8 +44,12 @@ You need:
 ```sh
 npm install          # also installs the Tauri CLI; no global cargo-tauri needed
 npm run tauri dev    # run in development
-npm run tauri build  # build a release bundle
+npm run tauri build  # build packages for this machine
 ```
+
+### Linux packages and releases
+
+`mise run package` builds a `.deb` and an `.AppImage` in an Ubuntu 22.04 container (into `dist/`), so they run on Ubuntu 22.04, Debian 12 and anything newer. `mise run test-package` installs the `.deb` on a clean container and checks that it signs on and resumes. `mise run release` tags the current commit and pushes the tag, and GitHub Actions attaches both packages to a draft release. Until AIMtrix goes public, builds are numbered `0.0.1-<seconds since midnight UTC>`.
 
 ## Development
 

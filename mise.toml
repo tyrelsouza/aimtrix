@@ -1,0 +1,29 @@
+# Project tasks: `mise tasks` lists them, `mise run <task>` runs one.
+
+[tasks.dev]
+description = "Run AIMtrix in development"
+run = "npm run tauri dev"
+
+[tasks.check]
+description = "Type-check the frontend and run the Rust unit tests"
+run = ["npm run check", "cargo test --manifest-path src-tauri/Cargo.toml"]
+
+[tasks.test-server]
+description = "All Rust tests, including those against the dev homeservers (start them first)"
+run = "cargo test --manifest-path src-tauri/Cargo.toml -- --include-ignored --test-threads=8"
+
+[tasks.version]
+description = "Print the next build's version (0.0.1-<seconds since midnight UTC>)"
+run = "node dev/set-version.mjs"
+
+[tasks.package]
+description = "Build the .deb and .AppImage in an Ubuntu 22.04 container, into dist/"
+run = "dev/build-package.sh"
+
+[tasks.test-package]
+description = "Install the newest .deb on a clean container and check it signs on and resumes"
+run = "dev/test-package.sh {{arg(name='image', default='ubuntu:24.04')}}"
+
+[tasks.release]
+description = "Tag HEAD with the next version and push the tag; GitHub Actions builds a draft release"
+run = "dev/release.sh"

@@ -14,6 +14,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/dist"
+# Numbered like releases (dev/set-version.mjs); written into the copy only.
+VERSION="${VERSION:-$(node "$ROOT/dev/set-version.mjs")}"
+echo "Building AIMtrix $VERSION"
 mkdir -p "$OUT"
 
 docker run --rm \
@@ -23,7 +26,7 @@ docker run --rm \
   -v aimtrix-build-npm:/root/.npm \
   -v aimtrix-build-target:/build/src-tauri/target \
   -e DEBIAN_FRONTEND=noninteractive \
-  -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+  -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e VERSION="$VERSION" \
   ubuntu:22.04 bash -c '
 set -euo pipefail
 apt-get update -qq
@@ -47,7 +50,10 @@ tar -C /src --exclude=./node_modules --exclude=./src-tauri/target \
   --exclude=./dist --exclude=./build --exclude=./.svelte-kit \
   --exclude=./dev/package-test -cf - . | tar -C /build -xf -
 cd /build
+node dev/set-version.mjs "$VERSION"
 npm ci --no-audit --no-fund >/dev/null
+# The cached target keeps old bundles; start without them.
+rm -rf src-tauri/target/release/bundle
 # AppImages need FUSE to build their own tooling; extract instead.
 APPIMAGE_EXTRACT_AND_RUN=1 npm run tauri build
 

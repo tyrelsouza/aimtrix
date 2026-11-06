@@ -148,7 +148,7 @@ async fn login(
         .with_encryption_settings(crypto::settings())
         .build()
         .await
-        .map_err(|e| format!("Couldn't reach homeserver: {e}"))?;
+        .map_err(|e| format!("Couldn't reach homeserver: {}", with_causes(&e)))?;
 
     client
         .matrix_auth()
@@ -172,6 +172,22 @@ async fn login(
     Ok(client)
 }
 
+/// An error and what caused it, e.g. "builder error: no CA certificates
+/// found" rather than just "builder error".
+fn with_causes(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let message = cause.to_string();
+        // Some errors repeat their cause in their own message.
+        if !text.contains(&message) {
+            text = format!("{text}: {message}");
+        }
+        source = cause.source();
+    }
+    text
+}
+
 /// Why the server refused a sign-on. Usually a wrong password, but servers
 /// also refuse for other reasons (matrix.org: too many sessions), so show
 /// their own message for anything that isn't about the password.
@@ -192,7 +208,7 @@ async fn restore(store: &Path, saved: &SavedSession) -> Result<Client, String> {
         .with_encryption_settings(crypto::settings())
         .build()
         .await
-        .map_err(|e| format!("Couldn't open the session store: {e}"))?;
+        .map_err(|e| format!("Couldn't open the session store: {}", with_causes(&e)))?;
     client
         .restore_session(saved.session.clone())
         .await
@@ -239,6 +255,28 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, "Incorrect screen name or password.");
+    }
+
+    #[test]
+    fn errors_show_their_causes() {
+        let error = Wrapped(std::io::Error::other("no CA certificates found"));
+        assert_eq!(
+            with_causes(&error),
+            "builder error: no CA certificates found"
+        );
+    }
+
+    #[derive(Debug)]
+    struct Wrapped(std::io::Error);
+    impl std::fmt::Display for Wrapped {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("builder error")
+        }
+    }
+    impl std::error::Error for Wrapped {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
     }
 
     #[test]

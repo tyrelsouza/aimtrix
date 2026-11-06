@@ -1,0 +1,68 @@
+# Builds the Linux packages for a version tag and attaches them to a draft
+# GitHub release. Start one with `mise run release`, which tags HEAD as
+# v<version> and pushes the tag; then review the draft and publish it.
+#
+# Built on Ubuntu 22.04 so the packages run there, on Debian 12 and on
+# anything newer (see dev/build-package.sh, which does the same locally).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use the tag's version
+        # The tag carries the version; it isn't committed.
+        run: node dev/set-version.mjs "${GITHUB_REF_NAME#v}"
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            librsvg2-dev libssl-dev libxdo-dev libayatana-appindicator3-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # Quick check only; the tests belong in CI (PLAN.md 8.1), and running
+      # them here would about double the build minutes.
+      - run: npm run check
+
+      - name: Build
+        run: npm run tauri build
+
+      - name: Attach to a draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > notes.md <<'EOF'
+          Test build, not for general use yet.
+
+          - `.deb`: Ubuntu 22.04+, Debian 12+ (`sudo apt install ./aimtrix_*.deb`)
+          - `.AppImage`: most other Linux distributions (`chmod +x` and run)
+
+          AIMtrix keeps your session in the system keyring, so it needs one
+          running (GNOME Keyring, KWallet or another Secret Service).
+          EOF
+          gh release create "$GITHUB_REF_NAME" --draft --prerelease \
+            --title "AIMtrix $GITHUB_REF_NAME" --notes-file notes.md \
+            src-tauri/target/release/bundle/deb/aimtrix_*.deb \
+            src-tauri/target/release/bundle/appimage/*.AppImage

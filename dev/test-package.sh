@@ -60,8 +60,7 @@ apt-get update -qq
 # tools to type and take screenshots.
 apt-get install -y -qq /pkg/aimtrix.deb xvfb xdotool imagemagick dbus-x11 \
   gnome-keyring >/out/apt.log 2>&1
-# Tauri names the package after the product name ("ai-mtrix"), so ask.
-dpkg -s "$(dpkg-deb -f /pkg/aimtrix.deb Package)" \
+dpkg -s aimtrix \
   | grep -E "^(Package|Version|Depends|Recommends):" | tee /out/package.txt
 
 dbus-run-session -- bash -c "

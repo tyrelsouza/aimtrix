@@ -1,6 +1,6 @@
 {
   "name": "aimtrix",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "A Matrix client with an AIM-style interface",
   "type": "module",
   "scripts": {
