@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, State, WebviewWindow};
 use crate::{
     matrix::{
         self, Session,
-        rooms::{self, Buddy},
+        rooms::{self, Buddy, Section},
         sync::Status,
     },
     session, windows,
@@ -81,6 +81,27 @@ pub async fn accept_invite(session: State<'_, Session>, room_id: String) -> Resu
 #[tauri::command]
 pub async fn decline_invite(session: State<'_, Session>, room_id: String) -> Result<(), String> {
     rooms::decline(&client(&session).await?, &room_id).await
+}
+
+/// Open the IM window for a room on the Buddy List, or focus it if it's
+/// already open.
+#[tauri::command]
+pub fn open_room(
+    app: AppHandle,
+    session: State<'_, Session>,
+    room_id: String,
+) -> Result<(), String> {
+    let name = {
+        let buddies = session.buddies.lock().unwrap();
+        match buddies.iter().find(|b| b.room_id == room_id) {
+            Some(b) if b.section == Section::Invitations => {
+                return Err("Accept the invitation to open this room.".to_owned());
+            }
+            Some(b) => b.name.clone(),
+            None => return Err("That room isn't on your Buddy List.".to_owned()),
+        }
+    };
+    windows::open_room(&app, &room_id, &name).map_err(|e| e.to_string())
 }
 
 /// The signed-on client. Cloned so the session isn't locked while it's used.

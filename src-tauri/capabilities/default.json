@@ -4,7 +4,8 @@
   "description": "Capability for the app's own windows",
   "windows": [
     "signon",
-    "main"
+    "main",
+    "room-*"
   ],
   "permissions": [
     "core:default"

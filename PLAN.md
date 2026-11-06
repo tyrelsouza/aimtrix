@@ -84,7 +84,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 - [x] **2.6 Invitations.** Put invites in their own group with Accept and Decline. *Done when:* accepting an invite moves the room into the right group.
 
 ### Phase 3: IM window
-- [ ] **3.1 Open window.** `open_room` creates or focuses a `room-<hash>` window titled with the buddy's name. *Done when:* double-clicking twice opens only one window.
+- [x] **3.1 Open window.** `open_room` creates or focuses a `room-<hash>` window titled with the buddy's name. *Done when:* double-clicking twice opens only one window.
 - [ ] **3.2 Read messages.** Subscribe to the room timeline and emit diffs. Render plain-text messages as "Name: text" in AIM colors. *Done when:* existing history shows up and new messages appear live.
 - [ ] **3.3 Send.** Add the text box: Enter sends, Shift+Enter adds a new line. *Done when:* the message shows up in Element.
 - [ ] **3.4 Scrollback.** Load older messages when you scroll up. *Done when:* you can reach the room's first message.

@@ -40,6 +40,17 @@
     }
   }
 
+  async function openRoom(room: Buddy) {
+    // Invitations open once accepted.
+    if (room.section === "invitations") return;
+    error = "";
+    try {
+      await invoke("open_room", { roomId: room.roomId });
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   async function signOff() {
     busy = true;
     error = "";
@@ -70,6 +81,7 @@
                   class:is-selected={room.roomId === selected}
                   class:is-unread={room.unread}
                   onclick={() => (selected = room.roomId)}
+                  ondblclick={() => openRoom(room)}
                 >
                   <img
                     class="aim-list__icon"

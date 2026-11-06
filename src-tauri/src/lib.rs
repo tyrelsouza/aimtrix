@@ -27,7 +27,8 @@ pub fn run() {
             commands::sync_status,
             commands::buddy_list,
             commands::accept_invite,
-            commands::decline_invite
+            commands::decline_invite,
+            commands::open_room
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
