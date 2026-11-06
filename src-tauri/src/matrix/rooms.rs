@@ -10,8 +10,9 @@ use std::sync::Arc;
 use eyeball_im::Vector;
 use futures_util::StreamExt;
 use matrix_sdk::{
-    Client, Room, RoomState,
-    ruma::{OwnedMxcUri, OwnedUserId, RoomId},
+    Client, Room, RoomMemberships, RoomState,
+    reqwest::StatusCode,
+    ruma::{OwnedMxcUri, OwnedRoomId, OwnedUserId, RoomId, ServerName, UserId},
 };
 use matrix_sdk_ui::room_list_service::{
     RoomListItem, RoomListService, filters::new_filter_non_left,
@@ -276,6 +277,116 @@ pub async fn icon(client: &Client, buddy: &Buddy, size: u32) -> Result<Option<St
     }
 }
 
+/// Who to add from what was typed in Add Buddy: a full Matrix ID, or just
+/// a name on our own server.
+pub fn buddy_id(input: &str, own_server: &ServerName) -> Result<OwnedUserId, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Err("Type a screen name or Matrix ID.".to_owned());
+    }
+    let not_an_id = || format!("\"{input}\" isn't a Matrix ID. They look like @name:matrix.org.");
+    // The parser allows old-style IDs with spaces, which no one can sign
+    // up with any more.
+    if input.chars().any(char::is_whitespace) {
+        return Err(not_an_id());
+    }
+    let full = if input.starts_with('@') {
+        input.to_owned()
+    } else if input.contains(':') {
+        format!("@{input}")
+    } else {
+        format!("@{input}:{own_server}")
+    };
+    UserId::parse(&full).map_err(|_| not_an_id())
+}
+
+/// A buddy added with [`add_buddy`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Added {
+    pub room_id: String,
+    /// The DM was already on the Buddy List.
+    pub existing: bool,
+}
+
+/// Start a DM with whoever `input` names, or find the one we already have.
+/// The new DM is encrypted and listed in `m.direct`; the buddy gets an
+/// invitation.
+pub async fn add_buddy(client: &Client, input: &str) -> Result<Added, String> {
+    let own = client.user_id().ok_or("Not signed on.")?;
+    let user = buddy_id(input, own.server_name())?;
+    if user == own {
+        return Err("That's you!".to_owned());
+    }
+    // One at a time, so adding the same buddy twice at once can't make two
+    // DMs.
+    let mut created = CREATED.lock().await;
+    if let Some(room) = existing_dm(client, &user, &created).await {
+        return Ok(Added {
+            room_id: room.room_id().to_string(),
+            existing: true,
+        });
+    }
+    // Check first, so a typo doesn't leave an empty room behind (Synapse
+    // invites people who don't exist without complaint). Servers may hide
+    // profiles of people we share no room with; only "not found" means
+    // they don't exist, and Synapse says that with a 404 but `M_UNKNOWN`.
+    if let Err(e) = client.account().fetch_user_profile_of(&user).await
+        && e.as_client_api_error()
+            .is_some_and(|e| e.status_code == StatusCode::NOT_FOUND)
+    {
+        return Err(format!("There's no one called {user}."));
+    }
+    let room = client
+        .create_dm(&user)
+        .await
+        .map_err(|e| format!("Couldn't add {user}: {e}"))?;
+    created.push((own.to_owned(), user, room.room_id().to_owned()));
+    Ok(Added {
+        room_id: room.room_id().to_string(),
+        existing: false,
+    })
+}
+
+/// DMs [`add_buddy`] made this run, as (us, buddy, room). A new DM reaches
+/// `m.direct`, and its members reach the store, only with a later sync.
+static CREATED: tokio::sync::Mutex<Vec<(OwnedUserId, OwnedUserId, OwnedRoomId)>> =
+    tokio::sync::Mutex::const_new(Vec::new());
+
+/// A DM with `user` that we're in and they're still in (or invited to):
+/// one [`add_buddy`] just made, one in `m.direct`, or a room of just the
+/// two of us.
+async fn existing_dm(
+    client: &Client,
+    user: &UserId,
+    created: &[(OwnedUserId, OwnedUserId, OwnedRoomId)],
+) -> Option<Room> {
+    let own = client.user_id()?;
+    let mut just_made = created
+        .iter()
+        .filter(|(us, buddy, _)| us == own && buddy == user)
+        .filter_map(|(_, _, room_id)| client.get_room(room_id))
+        .filter(|room| room.state() == RoomState::Joined);
+    if let Some(room) = just_made.next_back() {
+        return Some(room);
+    }
+    let in_m_direct = client.get_dm_rooms(user);
+    let just_us = client
+        .joined_rooms()
+        .into_iter()
+        .filter(|room| room.active_members_count() <= 2);
+    for room in in_m_direct.chain(just_us) {
+        let members = room
+            .members_no_sync(RoomMemberships::JOIN | RoomMemberships::INVITE)
+            .await
+            .unwrap_or_default();
+        if members.iter().any(|m| m.user_id() == user) {
+            return Some(room);
+        }
+    }
+    None
+}
+
 /// Accept an invite. The room moves out of Invitations on the next update;
 /// the SDK adds DM invites to `m.direct`.
 pub async fn accept(client: &Client, room_id: &str) -> Result<(), String> {
@@ -321,6 +432,23 @@ mod tests {
             in_m_direct: true,
             ..room(2)
         }
+    }
+
+    #[test]
+    fn buddy_ids_accept_names_and_full_ids() {
+        let ours = <&ServerName>::try_from("localhost").unwrap();
+        assert_eq!(buddy_id(" bob ", ours).unwrap(), "@bob:localhost");
+        assert_eq!(
+            buddy_id("@bob:matrix.org", ours).unwrap(),
+            "@bob:matrix.org"
+        );
+        assert_eq!(buddy_id("bob:matrix.org", ours).unwrap(), "@bob:matrix.org");
+        assert_eq!(
+            buddy_id("", ours),
+            Err("Type a screen name or Matrix ID.".to_owned())
+        );
+        assert!(buddy_id("bob smith", ours).is_err());
+        assert!(buddy_id("@bob", ours).is_err());
     }
 
     #[test]

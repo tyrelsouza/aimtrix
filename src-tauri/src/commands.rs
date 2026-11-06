@@ -283,6 +283,20 @@ pub async fn set_away(session: State<'_, Session>, message: Option<String>) -> R
     presence.set_away(message.as_deref()).await
 }
 
+/// Open Add Buddy, or focus it.
+#[tauri::command]
+pub fn open_add_buddy(app: AppHandle) -> Result<(), String> {
+    windows::open_add_buddy(&app).map_err(|e| e.to_string())
+}
+
+/// Start a DM with whoever `buddy` names (a Matrix ID, or a name on our own
+/// server), or find the one we already have. It shows up on the Buddy List
+/// with the next update.
+#[tauri::command]
+pub async fn add_buddy(session: State<'_, Session>, buddy: String) -> Result<rooms::Added, String> {
+    rooms::add_buddy(&client(&session).await?, &buddy).await
+}
+
 /// Open Away Message, or focus it.
 #[tauri::command]
 pub fn open_away(app: AppHandle) -> Result<(), String> {

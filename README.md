@@ -14,6 +14,7 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 | Buddy List | Your rooms, in groups: Favorites (`m.favourite`), Buddies (DMs), Chats (rooms with several people) and Invitations, most recent first. Unread rooms are bold. |
 | Online / Offline | On servers with presence, Buddies splits into Online and Offline. Servers without presence (matrix.org, for one) keep a single Buddies group. |
 | Away message | Set one from the Buddy List. Buddies' away messages show on hover and in the IM window. Needs a server with presence. |
+| Add Buddy | Start a DM by Matrix ID, or just a name on your own server. |
 | IM window | One window per DM, with Buddy Icons, rich text (bold, italic, fonts, colors), "is typing…", read receipts, images, files, edits, deletions and replies. |
 | Chat Room window | Member list, topic, and "X has entered the room" lines. |
 | Buddy Icon | Profile pictures, with original default icons. |
@@ -25,7 +26,7 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 - Emoji verification works against your other sessions.
 - Accounts without recovery can set it up.
 
-Coming next (see `PLAN.md`): Add Buddy, Block, a Preferences window, auto-reply and Linux packages; then other server software, matrix.org testing and browser (OAuth) sign-on; and last, original sounds with mute.
+Coming next (see `PLAN.md`): sending files, Block, a Preferences window, auto-reply and Linux packages; then other server software, matrix.org testing and browser (OAuth) sign-on; and last, original sounds with mute.
 
 What counts as a DM: a room listed in `m.direct`, or one with at most two members. Tag a room `aimtrix.chat` to make it open as a Chat Room anyway.
 

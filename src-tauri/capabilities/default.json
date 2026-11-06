@@ -9,7 +9,8 @@
     "recovery",
     "verify",
     "setup-recovery",
-    "away"
+    "away",
+    "add-buddy"
   ],
   "permissions": [
     "core:default",

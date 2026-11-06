@@ -221,6 +221,29 @@
     </div>
   </section>
 
+  <!-- Add Buddy -->
+  <section class="aim-window" style="width: 300px">
+    <div class="aim-titlebar">
+      <img class="aim-titlebar__icon" src={appIcon} alt="" />
+      <span class="aim-titlebar__title">Add Buddy</span>
+      <div class="aim-titlebar__controls">
+        <button class="aim-titlebar__btn aim-titlebar__btn--close" aria-label="Close"></button>
+      </div>
+    </div>
+    <div class="aim-window__body">
+      <label class="aim-label">
+        Screen name or Matrix ID of the buddy to add:
+        <input class="aim-field" value="@dave:localhost" />
+      </label>
+      <p style="margin: 0; color: var(--c-text-disabled)">They get an invitation, and show up under Buddies.</p>
+      <p class="aim-alert" role="alert">There's no one called @dave:localhost.</p>
+      <div class="row end">
+        <button class="aim-btn">Cancel</button>
+        <button class="aim-btn is-default">Add</button>
+      </div>
+    </div>
+  </section>
+
   <!-- IM window -->
   <section class="aim-window" style="width: 360px; height: 340px">
     <div class="aim-titlebar">

@@ -2412,4 +2412,110 @@ mod tests {
         syncing.stop().await;
         alice.logout().await.unwrap();
     }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn add_buddy_starts_a_dm_once() {
+        use matrix_sdk::ruma::api::client::uiaa::{AuthData, MatrixUserIdentifier, Password};
+
+        let user = register_throwaway_user("addbuddy").await;
+        let dir = tempfile::tempdir().unwrap();
+        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+            .await
+            .unwrap();
+        let syncing = sync::start(&alice, |_| {}).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let watcher = watch_buddies(&syncing, move |b| {
+            let _ = tx.send(b);
+        });
+
+        // Clean up below even if a check fails, so no rooms are left behind.
+        let checks = std::panic::AssertUnwindSafe(async {
+            assert_eq!(
+                rooms::add_buddy(&alice, "alice").await,
+                Err("That's you!".to_owned())
+            );
+            assert_eq!(
+                rooms::add_buddy(&alice, "nobody-here-123").await,
+                Err("There's no one called @nobody-here-123:localhost.".to_owned())
+            );
+
+            // Just the name works for people on our own server. Adding them
+            // twice at once (a double-click) makes one DM, not two.
+            let (first, second) = tokio::join!(
+                rooms::add_buddy(&alice, &user),
+                rooms::add_buddy(&alice, &user)
+            );
+            let (first, second) = (first.unwrap(), second.unwrap());
+            assert_eq!(first.room_id, second.room_id);
+            assert!(first.existing != second.existing, "{first:?} {second:?}");
+            let added = if first.existing { second } else { first };
+            let room_id = added.room_id.clone();
+            wait_for_buddies(&mut rx, "the new DM under Buddies", |b| {
+                b.iter().any(|b| {
+                    b.room_id == room_id && b.kind == rooms::Kind::Dm && is_buddy(b.section)
+                })
+            })
+            .await;
+            let room = alice
+                .get_room(&matrix_sdk::ruma::RoomId::parse(&added.room_id).unwrap())
+                .unwrap();
+            assert!(room.latest_encryption_state().await.unwrap().is_encrypted());
+            // `m.direct` arrives with a later sync than the room itself.
+            let mut direct = false;
+            for _ in 0..100 {
+                direct = room.is_direct().await.unwrap();
+                if direct {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            assert!(direct, "the new DM isn't in m.direct");
+
+            // Adding them again finds the same DM.
+            let again = rooms::add_buddy(&alice, &format!("@{user}:localhost"))
+                .await
+                .unwrap();
+            assert_eq!(
+                again,
+                rooms::Added {
+                    room_id: added.room_id.clone(),
+                    existing: true
+                }
+            );
+        });
+        let result = futures_util::FutureExt::catch_unwind(checks).await;
+
+        watcher.abort();
+        syncing.stop().await;
+        let buddy_id = matrix_sdk::ruma::UserId::parse(format!("@{user}:localhost")).unwrap();
+        for room in alice.joined_rooms() {
+            let members = room
+                .members_no_sync(
+                    matrix_sdk::RoomMemberships::JOIN | matrix_sdk::RoomMemberships::INVITE,
+                )
+                .await
+                .unwrap();
+            if members.iter().any(|m| m.user_id() == buddy_id) {
+                room.leave().await.unwrap();
+            }
+        }
+        alice.logout().await.unwrap();
+        let buddy_dir = tempfile::tempdir().unwrap();
+        let buddy = login(buddy_dir.path(), PASS, HS, &user, "aimtrix-test")
+            .await
+            .unwrap();
+        let password = Password::new(
+            MatrixUserIdentifier::new(user.clone()).into(),
+            "aimtrix-test".to_owned(),
+        );
+        buddy
+            .account()
+            .deactivate(None, Some(AuthData::Password(password)), true)
+            .await
+            .unwrap();
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
+    }
 }

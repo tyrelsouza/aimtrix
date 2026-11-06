@@ -109,11 +109,12 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 ### Phase 6: AIM extras
 - [x] **6.1 Presence.** Detect whether the server has presence. If it does, split buddies into Online and Offline groups. *Done when:* both servers (presence on and off) look right.
 - [x] **6.2 Away messages.** Set your own away message, and show buddies' away messages in a tooltip and the IM window. *Done when:* an away message set in AIMtrix shows up in Element.
-- [ ] **6.3 Add Buddy.** Start a new DM by entering a Matrix ID. *Done when:* the new DM appears under Buddies.
-- [ ] **6.4 Block.** Block and unblock buddies (ignore user). *Done when:* a blocked user's messages are hidden.
-- [ ] **6.5 Preferences window.** Settings for auto-reply and fonts. *Done when:* settings persist across restarts.
-- [ ] **6.6 Auto-reply.** When away, auto-reply once per conversation. Off by default. *Done when:* it replies once, not on every message.
-- [ ] **6.7 Packaging.** Build Linux packages (AppImage/deb) with `npm run tauri build`. *Done when:* the package installs and runs on a clean machine.
+- [x] **6.3 Add Buddy.** Start a new DM by entering a Matrix ID. *Done when:* the new DM appears under Buddies.
+- [ ] **6.4 Send files.** Send a file or image from an IM or Chat Room window: a button that opens a file picker (run from Rust, like Save), plus drag and drop onto the window. Images get a thumbnail and size; uploads are encrypted in encrypted rooms (the SDK's `send_attachment`), show progress in the status bar, and can be cancelled. *Done when:* a file and an image sent from AIMtrix open in Element, in a plain and an encrypted room.
+- [ ] **6.5 Block.** Block and unblock buddies (ignore user). *Done when:* a blocked user's messages are hidden.
+- [ ] **6.6 Preferences window.** Settings for auto-reply and fonts. *Done when:* settings persist across restarts.
+- [ ] **6.7 Auto-reply.** When away, auto-reply once per conversation. Off by default. *Done when:* it replies once, not on every message.
+- [ ] **6.8 Packaging.** Build Linux packages (AppImage/deb) with `npm run tauri build`. *Done when:* the package installs and runs on a clean machine.
 
 ### Phase 7: Other servers and sign-in
 Beyond the dev Synapse: matrix.org (Synapse behind Matrix Authentication Service), other server software, and OAuth sign-on. Test against local servers only; matrix.org with a real account is a manual check you run yourself.
@@ -152,6 +153,7 @@ Not tied to a step. Tick or remove them as they're dealt with.
 - [ ] **Another online session cancels away.** Synapse combines presence across your devices, and online beats away. While Element (or any client that syncs as online) is open on another device, buddies see you as available, though your away message text is still set. AIMtrix can't override that. It could at least say so on the Buddy List, e.g. "Another session of yours is online, so buddies see you as available.", by reading its own presence back.
 - [ ] **Element Web doesn't show away messages.** It shows the buddy as "Away" (presence `unavailable`) but never displays `status_msg`, the text of the away message; other AIMtrix users see it in the tooltip and IM window. Other clients may differ.
 - [ ] **matrix.org's session limit.** matrix.org refuses to sign on an account that has too many sessions ("You have reached your hard device limit"), with `M_FORBIDDEN`, the same code as a wrong password. Sign On used to say "Incorrect screen name or password." for every `M_FORBIDDEN`; it now shows the server's own message unless it's about the password, and logs the server's reason. Still to do: link to the account page (`account_management_uri` in the server's `/auth_metadata`) so you can sign sessions out from there.
+- [ ] **The presence test timed out once.** In a run with a few other server tests, `presence_splits_buddies_into_online_and_offline` waited over 20 s for the buddy to show as online; alone, and in the next full run, it passed. If it recurs, check for a rate-limited (429) presence update being retried.
 - [ ] **Links in messages don't open.** Clicking one does nothing (so it can't navigate the window away). Open them in the browser with the Tauri opener plugin.
 - [x] **Flaky timeline tests under the full parallel run.** Fixed in 3.9. Two causes: the room list syncs only 1 event per room, so a burst of messages reset open conversations to the newest few (rooms with an open window are now subscribed, getting up to 20 per sync); and tests found Bob's DM by name, sometimes picking another test's temporary room (they now find seeded rooms by their `aimtrix.seed` marker).
 - **Killed test runs leave debris.** A test stopped before its cleanup leaves rooms and invites on the test accounts, and tests that look rooms up by name can then pick the wrong one. Find rooms by ID or by the seed marker (`seed_room` in the tests), not by name, and clean up the accounts after killing a run.

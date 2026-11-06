@@ -118,6 +118,7 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
     for (label, window) in app.webview_windows() {
         if label.starts_with(windows::ROOM_LABEL_PREFIX)
             || label == windows::AWAY_LABEL
+            || label == windows::ADD_BUDDY_LABEL
             || label == windows::RECOVERY_LABEL
             || label == windows::VERIFY_LABEL
             || label == windows::SETUP_RECOVERY_LABEL

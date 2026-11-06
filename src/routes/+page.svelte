@@ -174,7 +174,7 @@
     {/if}
     <div class="buttons">
       <span class="row">
-        <button class="aim-btn" onclick={signOff} disabled={busy}>Sign Off</button>
+        <button class="aim-btn" onclick={() => invoke("open_add_buddy")}>Add Buddy…</button>
         <button
           class="aim-btn"
           onclick={() => invoke("open_away")}
@@ -183,6 +183,7 @@
         >
           Away…
         </button>
+        <button class="aim-btn" onclick={signOff} disabled={busy}>Sign Off</button>
       </span>
       {#if import.meta.env.DEV}
         <a href="/demo">Style demo</a>
@@ -236,7 +237,12 @@
   }
   .buttons {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
+    gap: 4px;
+  }
+  .buttons .aim-btn {
+    min-width: 0;
   }
 </style>

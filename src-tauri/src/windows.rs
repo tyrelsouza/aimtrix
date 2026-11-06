@@ -56,6 +56,24 @@ pub fn open_recovery(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Label of the Add Buddy window.
+pub const ADD_BUDDY_LABEL: &str = "add-buddy";
+
+/// Add Buddy: start a DM by Matrix ID.
+pub fn open_add_buddy(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(ADD_BUDDY_LABEL) {
+        window.unminimize()?;
+        return window.set_focus();
+    }
+    WebviewWindowBuilder::new(app, ADD_BUDDY_LABEL, WebviewUrl::App("/add-buddy".into()))
+        .title("Add Buddy")
+        .inner_size(300.0, 170.0)
+        .resizable(false)
+        .center()
+        .build()?;
+    Ok(())
+}
+
 /// Label of the Away Message window.
 pub const AWAY_LABEL: &str = "away";
 

@@ -44,6 +44,8 @@ pub fn run() {
             commands::room_icon,
             commands::image_thumbnail,
             commands::save_attachment,
+            commands::open_add_buddy,
+            commands::add_buddy,
             commands::own_presence,
             commands::set_away,
             commands::open_away,
