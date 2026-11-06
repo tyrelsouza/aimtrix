@@ -1,0 +1,483 @@
+/*
+ * AIM-era (Win9x-style) window chrome for AIMtrix.
+ * Original CSS only: bevels are box-shadows, glyphs are inline SVG.
+ * Classes are prefixed `aim-`. See src/routes/demo for every piece in use.
+ */
+
+:root {
+  /* Classic 3D palette */
+  --c-face: #c0c0c0;
+  --c-hilite: #ffffff;
+  --c-light: #dfdfdf;
+  --c-shadow: #808080;
+  --c-dark: #0a0a0a;
+  --c-text: #000000;
+  --c-text-disabled: #808080;
+  --c-window: #ffffff;
+  --c-select: #000080;
+  --c-select-text: #ffffff;
+
+  /* Title bars */
+  --c-title-from: #000080;
+  --c-title-to: #1084d0;
+  --c-title-inactive-from: #808080;
+  --c-title-inactive-to: #b5b5b5;
+
+  /* Conversations: you in red, them in blue */
+  --c-im-self: #e00000;
+  --c-im-buddy: #0000e0;
+  --c-im-system: #808080;
+  --c-away: #808080;
+
+  --font-ui: Tahoma, "MS Sans Serif", "Segoe UI", "Liberation Sans", "DejaVu Sans", sans-serif;
+  --font-size: 11px;
+
+  --bevel-raised:
+    inset -1px -1px var(--c-dark), inset 1px 1px var(--c-light),
+    inset -2px -2px var(--c-shadow), inset 2px 2px var(--c-hilite);
+  --bevel-pressed:
+    inset -1px -1px var(--c-hilite), inset 1px 1px var(--c-dark),
+    inset -2px -2px var(--c-light), inset 2px 2px var(--c-shadow);
+  --bevel-sunken:
+    inset -1px -1px var(--c-hilite), inset 1px 1px var(--c-shadow),
+    inset -2px -2px var(--c-light), inset 2px 2px var(--c-dark);
+  --bevel-thin-sunken: inset -1px -1px var(--c-hilite), inset 1px 1px var(--c-shadow);
+  --bevel-thin-raised: inset -1px -1px var(--c-shadow), inset 1px 1px var(--c-hilite);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--c-face);
+  color: var(--c-text);
+  font-family: var(--font-ui);
+  font-size: var(--font-size);
+  /* Chrome isn't selectable text; fields and transcripts opt back in. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ---------- Window ---------- */
+
+.aim-window {
+  display: flex;
+  flex-direction: column;
+  background: var(--c-face);
+  box-shadow: var(--bevel-raised);
+  padding: 3px;
+}
+
+.aim-window__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 6px;
+  padding: 6px;
+  min-height: 0;
+}
+
+/* ---------- Title bar ---------- */
+
+.aim-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 2px 0 3px;
+  background: linear-gradient(90deg, var(--c-title-from), var(--c-title-to));
+  color: #fff;
+  font-weight: bold;
+}
+
+.aim-titlebar.is-inactive {
+  background: linear-gradient(90deg, var(--c-title-inactive-from), var(--c-title-inactive-to));
+  color: var(--c-light);
+}
+
+.aim-titlebar__icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.aim-titlebar__title {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.aim-titlebar__controls {
+  display: flex;
+  flex: none;
+}
+
+.aim-titlebar__btn {
+  width: 16px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: var(--c-face) no-repeat center;
+  box-shadow: var(--bevel-raised);
+}
+
+.aim-titlebar__btn:active {
+  box-shadow: var(--bevel-pressed);
+  background-position: calc(50% + 1px) calc(50% + 1px);
+}
+
+/* Close has a 2px gap before it, like the classic layout. */
+.aim-titlebar__btn--close {
+  margin-left: 2px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='7' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h2v1H0zM6 0h2v1H6zM1 1h2v1H1zM5 1h2v1H5zM2 2h4v1H2zM3 3h2v1H3zM2 4h4v1H2zM1 5h2v1H1zM5 5h2v1H5zM0 6h2v1H0zM6 6h2v1H6z'/%3E%3C/svg%3E");
+}
+
+.aim-titlebar__btn--minimize {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='2' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h6v2H0z'/%3E%3C/svg%3E");
+  background-position: 4px 8px;
+}
+
+.aim-titlebar__btn--maximize {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9' shape-rendering='crispEdges'%3E%3Cpath fill-rule='evenodd' d='M0 0h9v9H0zM1 2v6h7V2z'/%3E%3C/svg%3E");
+}
+
+/* ---------- Menu bar ---------- */
+
+.aim-menubar {
+  display: flex;
+  padding: 1px 0;
+}
+
+.aim-menubar__item {
+  padding: 2px 6px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+}
+
+.aim-menubar__item:hover,
+.aim-menubar__item:focus-visible {
+  outline: none;
+  box-shadow: var(--bevel-thin-raised);
+}
+
+.aim-menubar__item:active,
+.aim-menubar__item.is-open {
+  box-shadow: var(--bevel-thin-sunken);
+}
+
+/* ---------- Buttons ---------- */
+
+.aim-btn {
+  min-width: 75px;
+  min-height: 23px;
+  padding: 0 12px;
+  border: 0;
+  background: var(--c-face);
+  box-shadow: var(--bevel-raised);
+  font: inherit;
+  color: var(--c-text);
+}
+
+.aim-btn:active:not(:disabled) {
+  box-shadow: var(--bevel-pressed);
+  padding: 2px 11px 0 13px;
+}
+
+.aim-btn:focus-visible {
+  outline: 1px dotted var(--c-text);
+  outline-offset: -4px;
+}
+
+.aim-btn.is-default {
+  box-shadow: inset 0 0 0 1px var(--c-dark), var(--bevel-raised);
+}
+
+.aim-btn:disabled {
+  color: var(--c-text-disabled);
+  text-shadow: 1px 1px 0 var(--c-hilite);
+}
+
+/* Small flat toolbar buttons that only bevel on hover (formatting bar, etc.). */
+.aim-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.aim-toolbar__btn {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+}
+
+.aim-toolbar__btn:hover {
+  box-shadow: var(--bevel-thin-raised);
+}
+
+.aim-toolbar__btn:active,
+.aim-toolbar__btn[aria-pressed="true"] {
+  box-shadow: var(--bevel-thin-sunken);
+}
+
+.aim-toolbar__sep {
+  width: 2px;
+  height: 18px;
+  margin: 0 3px;
+  box-shadow: var(--bevel-thin-sunken);
+}
+
+/* ---------- Text fields ---------- */
+
+.aim-field {
+  padding: 3px 4px;
+  border: 0;
+  background: var(--c-window);
+  box-shadow: var(--bevel-sunken);
+  font: inherit;
+  color: var(--c-text);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.aim-field:focus {
+  outline: none;
+}
+
+.aim-field:disabled {
+  background: var(--c-face);
+  color: var(--c-text-disabled);
+}
+
+textarea.aim-field {
+  resize: none;
+}
+
+.aim-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ---------- Group box ---------- */
+
+.aim-groupbox {
+  margin: 0;
+  padding: 8px 8px 6px;
+  /* A real border (not outline) so the legend breaks the line. The white
+     shadows give it the etched look. */
+  border: 1px solid var(--c-shadow);
+  box-shadow: 1px 1px 0 var(--c-hilite), inset 1px 1px 0 var(--c-hilite);
+}
+
+.aim-groupbox > legend {
+  padding: 0 3px;
+}
+
+/* ---------- Sunken panels: list, transcript, member list ---------- */
+
+.aim-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px;
+  background: var(--c-window);
+  box-shadow: var(--bevel-sunken);
+}
+
+/* Buddy list groups are native <details>/<summary>, so collapsing needs no JS. */
+.aim-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 2px;
+  font-weight: bold;
+  list-style: none;
+  cursor: default;
+}
+
+.aim-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.aim-group > summary::before {
+  content: "";
+  border: 4px solid transparent;
+  border-left: 5px solid var(--c-text);
+  border-right: 0;
+  margin: 0 1px 0 2px;
+}
+
+.aim-group[open] > summary::before {
+  border: 4px solid transparent;
+  border-top: 5px solid var(--c-text);
+  border-bottom: 0;
+  margin: 2px 0 0 0;
+}
+
+.aim-group__count {
+  font-weight: normal;
+}
+
+.aim-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.aim-list__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px 1px 18px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.aim-list__item.is-selected {
+  background: var(--c-select);
+  color: var(--c-select-text);
+}
+
+.aim-list__item.is-unread {
+  font-weight: bold;
+}
+
+.aim-list__item.is-away,
+.aim-list__item.is-offline {
+  color: var(--c-away);
+}
+
+.aim-list__item.is-away {
+  font-style: italic;
+}
+
+.aim-list__item.is-selected.is-away,
+.aim-list__item.is-selected.is-offline {
+  color: var(--c-select-text);
+}
+
+/* Little buddy icon inside a list row. */
+.aim-list__icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  object-fit: cover;
+}
+
+/* ---------- Buddy icon frame ---------- */
+
+.aim-buddy-icon {
+  display: block;
+  width: 52px;
+  height: 52px;
+  padding: 2px;
+  background: var(--c-window);
+  box-shadow: var(--bevel-sunken);
+  object-fit: cover;
+}
+
+/* ---------- Conversation transcript ---------- */
+
+.aim-transcript {
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.aim-msg {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.aim-msg__time {
+  color: var(--c-im-system);
+  font-size: 10px;
+  margin-right: 4px;
+}
+
+.aim-msg__name {
+  font-weight: bold;
+}
+
+.aim-msg__name--self {
+  color: var(--c-im-self);
+}
+
+.aim-msg__name--buddy {
+  color: var(--c-im-buddy);
+}
+
+.aim-msg--system {
+  color: var(--c-im-system);
+  font-style: italic;
+}
+
+.aim-msg--undecryptable {
+  color: var(--c-im-system);
+}
+
+/* ---------- Status bar ---------- */
+
+.aim-statusbar {
+  display: flex;
+  gap: 2px;
+}
+
+.aim-statusbar__section {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  box-shadow: var(--bevel-thin-sunken);
+}
+
+.aim-statusbar__section--fit {
+  flex: none;
+}
+
+/* ---------- Separator ---------- */
+
+.aim-sep {
+  height: 2px;
+  margin: 2px 0;
+  border: 0;
+  box-shadow: var(--bevel-thin-sunken);
+}
+
+/* ---------- Scrollbars (WebKitGTK / WebKit) ---------- */
+
+::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+
+::-webkit-scrollbar-track {
+  /* The classic 1px checkerboard. */
+  background: repeating-conic-gradient(var(--c-face) 0 25%, var(--c-hilite) 0 50%) 0 0 / 2px 2px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--c-face);
+  box-shadow: var(--bevel-raised);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--c-face);
+}

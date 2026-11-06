@@ -11,6 +11,7 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 - **Tauri v2** desktop app.
 - **Rust core** (`src-tauri/`): runs a single `matrix-sdk` (matrix-rust-sdk) `Client` with an SQLite store and E2EE. All Matrix logic lives here.
 - **Frontend** (`src/`): SvelteKit (Svelte 5, TypeScript, `adapter-static` SPA mode, `ssr = false`) and hand-written Win98/XP-style CSS. One route per window type. Windows are thin views with no Matrix SDK in JS.
+- **Styling:** reuse the `aim-` classes and CSS tokens in `src/styles/aim-chrome.css` (loaded globally from `src/routes/+layout.svelte`) instead of one-off styles. `/demo` (dev-only link on the main page) shows every piece; add new pieces there too.
 
 ## Architecture rules
 - One Matrix session, owned by the Rust core. Windows talk to it only through `#[tauri::command]`s (`src-tauri/src/commands.rs`) and Tauri events (`buddylist:update`, `room:<id>:timeline_diff`, `room:<id>:typing`, `presence:update`, `verification:*`).

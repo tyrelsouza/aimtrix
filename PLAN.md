@@ -67,7 +67,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 ### Phase 0: Foundations
 - [x] **0.1 Test homeserver.** Add `dev/docker-compose.yml` with Synapse (presence enabled) and a seed script that creates 3 users, a DM, and a 3-person group, each in an encrypted and an unencrypted version. *Done when:* Element Web can log in as each user and see the rooms.
 - [x] **0.2 Scaffold.** Run `git init` and create a Tauri v2 app with a TypeScript + Svelte/Solid frontend. *Done when:* `npm run tauri dev` opens an empty window.
-- [ ] **0.3 AIM chrome CSS.** Build `styles/aim-chrome.css` with window frame, title bar, buttons, list, text box and status bar styles. *Done when:* a static demo page shows the pieces.
+- [x] **0.3 AIM chrome CSS.** Build `src/styles/aim-chrome.css` with window frame, title bar, buttons, list, text box and status bar styles. *Done when:* a static demo page shows the pieces.
 
 ### Phase 1: Sign On
 - [ ] **1.1 First login.** Add `matrix-sdk` and a `login` command that takes homeserver, username and password. *Done when:* logging in as a test user returns the user ID (never log the token).
