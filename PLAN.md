@@ -96,7 +96,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 
 ### Phase 4: Chat Room window
 - [x] **4.1 Chat Room window.** Reuse the timeline component in a Chat Room layout for group rooms. *Done when:* a group opens as a Chat Room and a DM opens as an IM.
-- [ ] **4.2 Member list.** Add a member pane with display names and icons. *Done when:* it updates when someone joins.
+- [x] **4.2 Member list.** Add a member pane with display names and icons. *Done when:* it updates when someone joins.
 - [ ] **4.3 Room events.** Show "X has entered/left the room" lines and the topic. *Done when:* changes made in Element appear in the window.
 
 ### Phase 5: Encryption

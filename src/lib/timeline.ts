@@ -159,6 +159,6 @@ export function describeTyping(names: string[]): string {
 }
 
 /** The window's label is `room-<key>`; its events are `room:<key>:…`. */
-function roomKey(): string {
+export function roomKey(): string {
   return getCurrentWebviewWindow().label.replace(/^room-/, "");
 }

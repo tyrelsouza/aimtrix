@@ -7,6 +7,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::{
     matrix::{
         self, Session, media,
+        members::Member,
         rooms::{self, Buddy, Section},
         sync::Status,
         timeline::Line,
@@ -120,6 +121,17 @@ pub async fn room_timeline(
     room_id: String,
 ) -> Result<Vec<Line>, String> {
     session::watch_timeline(&app, &client(&session).await?, &room_id).await
+}
+
+/// Who's in a room, for its Chat Room's member list. Changes arrive as the
+/// whole list in `room:<key>:members` events.
+#[tauri::command]
+pub async fn room_members(
+    app: AppHandle,
+    session: State<'_, Session>,
+    room_id: String,
+) -> Result<Vec<Member>, String> {
+    session::watch_members(&app, &client(&session).await?, &room_id).await
 }
 
 /// Send a message from a room's window. `body` is the plain text;

@@ -9,9 +9,12 @@ What changed in each phase of `PLAN.md`, step by step. Open problems live under 
   - The message list and the compose box (toolbar, editor, typing notices, Send) are now shared components in `src/lib/conversation/` (`Transcript.svelte`, `Compose.svelte`), used by both windows. The status bar text is in `status.ts`.
   - The IM window is now built from these components and should look the same as before.
   - The Chat Room in `/demo` now shows the formatting toolbar.
+- **4.2 Member list.** The Chat Room has a member pane on the right with the count ("3 people here") and each member's Buddy Icon and display name, sorted by name. It updates live when someone joins or leaves, or changes their name or avatar.
+  - `matrix/members.rs` loads the joined members and resends the whole list as a `room:<key>:members` event on every member event and whenever an icon finishes downloading. Windows fetch the first list with the `room_members` command.
+  - The watch stops when the window closes or you sign off.
 
 ### Still to do
-- 4.2 Member list, 4.3 Room events ("has entered/left the room", topic).
+- 4.3 Room events ("has entered/left the room", topic).
 
 ## Phase 3: IM window
 

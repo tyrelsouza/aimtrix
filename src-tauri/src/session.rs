@@ -13,6 +13,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::{
     matrix::{
         self, Session, Signed,
+        members::{self, Member},
         rooms::{self, Buddy},
         sync::{self, Status},
         timeline::{self, Line},
@@ -52,6 +53,7 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
     app.state::<Session>().buddies.lock().unwrap().clear();
     // Dropping each watch stops it.
     app.state::<Session>().timelines.lock().unwrap().clear();
+    app.state::<Session>().members.lock().unwrap().clear();
     for (label, window) in app.webview_windows() {
         if label.starts_with(windows::ROOM_LABEL_PREFIX) {
             let _ = window.close();
@@ -104,10 +106,44 @@ pub async fn watch_timeline(
     Ok(lines)
 }
 
-/// Stop following a room's conversation, once its window is gone.
+/// Follow who's in a room for its Chat Room window, replacing any earlier
+/// watch. Returns the members now; changes go to the window as the whole
+/// list in `room:<key>:members` events.
+pub async fn watch_members(
+    app: &AppHandle,
+    client: &Client,
+    room_id: &str,
+) -> Result<Vec<Member>, String> {
+    let key = windows::room_key(room_id);
+    let event = format!("room:{key}:members");
+    let label = format!("{}{key}", windows::ROOM_LABEL_PREFIX);
+    let (first, watching) = members::watch(client, room_id, {
+        let app = app.clone();
+        move |members| {
+            if let Err(e) = app.emit_to(&label, &event, &members) {
+                eprintln!("Couldn't send who's in the room to its window: {e}");
+            }
+        }
+    })
+    .await?;
+    app.state::<Session>()
+        .members
+        .lock()
+        .unwrap()
+        .insert(room_id.to_owned(), watching);
+    Ok(first)
+}
+
+/// Stop following a room's conversation and members, once its window is
+/// gone.
 pub fn unwatch_timeline(app: &AppHandle, room_id: &str) {
     app.state::<Session>()
         .timelines
+        .lock()
+        .unwrap()
+        .remove(room_id);
+    app.state::<Session>()
+        .members
         .lock()
         .unwrap()
         .remove(room_id);

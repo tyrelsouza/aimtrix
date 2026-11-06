@@ -3,6 +3,7 @@
 mod html;
 mod keyring;
 pub mod media;
+pub mod members;
 pub mod rooms;
 pub mod sync;
 pub mod timeline;
@@ -30,6 +31,8 @@ pub struct Session {
     pub buddies: std::sync::Mutex<Vec<rooms::Buddy>>,
     /// The conversation each open room window follows, by room ID.
     pub timelines: std::sync::Mutex<HashMap<String, std::sync::Arc<timeline::Watching>>>,
+    /// Who's in each open Chat Room, by room ID.
+    pub members: std::sync::Mutex<HashMap<String, members::Watching>>,
 }
 
 pub struct Signed {
@@ -1498,6 +1501,69 @@ mod tests {
         drop(watching);
         alice_list.abort();
         alice_sync.stop().await;
+        alice.logout().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn member_list_updates_when_someone_joins() {
+        use matrix_sdk::ruma::{
+            api::client::room::create_room::v3::{Request, RoomPreset},
+            user_id,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+            .await
+            .unwrap();
+        let syncing = sync::start(&alice, |_| {}).await.unwrap();
+        let mut request = Request::new();
+        request.name = Some("Members Test".to_owned());
+        request.preset = Some(RoomPreset::PrivateChat);
+        request.invite = vec![user_id!("@bob:localhost").to_owned()];
+        let room = alice.create_room(request).await.unwrap();
+        let room_id = room.room_id().to_owned();
+        // Like an open Chat Room: sync sends this room in full.
+        syncing
+            .room_list_service()
+            .set_room_subscriptions(&[&room_id])
+            .await;
+
+        let (tx, mut changes) = tokio::sync::mpsc::unbounded_channel();
+        let (first, watching) = members::watch(&alice, room_id.as_str(), move |m| {
+            let _ = tx.send(m);
+        })
+        .await
+        .unwrap();
+        let names = |m: &[members::Member]| m.iter().map(|m| m.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&first), ["Alice Anderson"]);
+        assert!(first[0].own);
+
+        let bob_dir = tempfile::tempdir().unwrap();
+        let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
+            .await
+            .unwrap();
+        bob.join_room_by_id(&room_id).await.unwrap();
+
+        let joined = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let members = changes.recv().await.expect("watch stopped");
+                if members.len() == 2 {
+                    break members;
+                }
+            }
+        })
+        .await
+        .expect("Bob never showed up in the member list");
+        assert_eq!(names(&joined), ["Alice Anderson", "Bob Brown"]);
+        assert!(!joined[1].own);
+
+        // Clean up: both leave the test room.
+        bob.get_room(&room_id).unwrap().leave().await.unwrap();
+        bob.logout().await.unwrap();
+        drop(watching);
+        room.leave().await.unwrap();
+        syncing.stop().await;
         alice.logout().await.unwrap();
     }
 }
