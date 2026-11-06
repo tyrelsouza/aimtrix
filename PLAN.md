@@ -121,6 +121,16 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 - **Trademark and copyright:** recreate the *style* (Win9x/XP chrome, buddy-list layout). Do not ship AOL logos, the running-man mascot or the original sound files. Use original art and sounds.
 - **Media:** newer servers require authenticated media (Matrix 1.11). `matrix-sdk`'s media API handles this. Cache thumbnails on disk.
 
+## Known issues and follow-ups
+Not tied to a step. Tick or remove them as they're dealt with.
+
+- [ ] **Stale test devices.** Test runs killed before they log out (e.g. by a timeout) leave devices behind; alice had 16. Remove them in Element under Settings → Sessions, keeping the app's own.
+- [ ] **Slow test logins.** Each login in a test takes about 5 s. The cause isn't confirmed; probably encryption and store setup in debug builds. Try `[profile.dev.package."*"] opt-level = 2` in `src-tauri/Cargo.toml` (slower first build).
+- [ ] **Buddy List may miss tag and `m.direct` changes.** Suspected, untested: adding or removing `aimtrix.chat`, or an `m.direct` change, may not move the room until something else in it changes.
+- [ ] **Recheck the SDK stop workaround when upgrading matrix-sdk.** In 0.19 a `SyncService::stop()` right after `start()` can lose the stop request and hang forever. `Syncing::stop` in `src-tauri/src/matrix/sync.rs` repeats the request every 100 ms. Drop the workaround once the SDK fixes this.
+- **Killed test runs leave debris.** A test stopped before its cleanup leaves rooms and invites on the test accounts, and tests that look rooms up by name can then pick the wrong one. Find rooms by ID where possible, and clean up the accounts after killing a run.
+- **Dev server rate limits.** Synapse's newer `rc_room_creation` limit made room-creating tests stall for minutes. `dev/synapse/homeserver.yaml` now relaxes it with the other limits; relax any new limit Synapse adds the same way.
+
 ## Verification
 - **Local test homeserver:** run Synapse or conduwuit in Docker with presence enabled. Create 3 test users, a DM between 2 of them and a 3-person group, both encrypted.
 - **Unit tests** (`cargo test`): room classification and grouping, plus timeline-item → display-line formatting.

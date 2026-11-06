@@ -588,6 +588,18 @@ mod tests {
             let room_id = matrix_sdk::ruma::RoomId::parse(id).unwrap();
             alice.get_room(&room_id).unwrap().leave().await.unwrap();
         }
+        // Carol declines, so the invite doesn't pile up on her account. (Bob
+        // can't withdraw it: the preset gives invitees his power level.)
+        let carol_dir = tempfile::tempdir().unwrap();
+        let carol = login(carol_dir.path(), PASS, HS, "carol", "aimtrix-test")
+            .await
+            .unwrap();
+        carol
+            .sync_once(matrix_sdk::config::SyncSettings::default())
+            .await
+            .unwrap();
+        rooms::decline(&carol, &group_id).await.unwrap();
+        carol.logout().await.unwrap();
         for room in [dm, group, declined] {
             room.leave().await.unwrap();
         }

@@ -6,6 +6,7 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 - Work through the `## Steps` checklist in `PLAN.md` one step at a time, in order. Don't start the next step unless asked.
 - A step is finished only when its "Done when" check passes. Then tick its box (`[x]`) in `PLAN.md`.
 - If a step turns out bigger than expected, split it into sub-steps in `PLAN.md` instead of doing it all at once.
+- Record problems found along the way that don't belong to a step under "Known issues and follow-ups" in `PLAN.md`.
 - Never commit. The user makes all commits themselves, outside Claude. Don't run `git commit` or other history-changing git commands, don't offer to commit, and don't comment on commit status.
 
 ## Stack

@@ -13,6 +13,8 @@ use tauri::async_runtime::{JoinHandle, spawn};
 /// How long to wait before restarting after a sync error that isn't just
 /// being offline (offline mode reconnects by itself).
 const RETRY_AFTER: Duration = Duration::from_secs(5);
+/// How often [`Syncing::stop`] repeats its stop request.
+const STOP_REPEAT: Duration = Duration::from_millis(100);
 
 /// Connection status, as shown in the Buddy List status bar.
 /// Serializes as `{"state": "online"}` or `{"state": "error", "message": "…"}`.
@@ -44,7 +46,21 @@ impl Syncing {
     pub async fn stop(self) {
         // Stop reporting first so stopping doesn't show up as a status change.
         self.watcher.abort();
-        self.service.stop().await;
+        // matrix-sdk 0.19 loses a stop request sent before the room list sync
+        // starts listening for one, which happens on its first poll, and then
+        // waits for it forever. Stopping right after starting (e.g. signing
+        // off during launch) can do that, so repeat the request until the
+        // stop finishes. Extra requests to a stopped sync are ignored.
+        let room_list = self.service.room_list_service();
+        let mut stopping = std::pin::pin!(self.service.stop());
+        loop {
+            tokio::select! {
+                () = &mut stopping => break,
+                () = tokio::time::sleep(STOP_REPEAT) => {
+                    let _ = room_list.stop_sync();
+                }
+            }
+        }
     }
 }
 
