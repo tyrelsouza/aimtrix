@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use eyeball_im::Vector;
 use futures_util::StreamExt;
-use matrix_sdk::RoomState;
+use matrix_sdk::{Client, Room, RoomState, ruma::RoomId};
 use matrix_sdk_ui::room_list_service::{
     RoomListItem, RoomListService, filters::new_filter_non_left,
 };
@@ -192,6 +192,31 @@ async fn buddy(room: &RoomListItem, icons: &Arc<Icons>) -> Option<Buddy> {
         unread: room.num_unread_messages() > 0 || room.is_marked_unread(),
         icon: avatar.and_then(|mxc| icons.get(&mxc)),
     })
+}
+
+/// Accept an invite. The room moves out of Invitations on the next update;
+/// the SDK adds DM invites to `m.direct`.
+pub async fn accept(client: &Client, room_id: &str) -> Result<(), String> {
+    invite(client, room_id)?
+        .join()
+        .await
+        .map_err(|e| format!("Couldn't accept the invitation: {e}"))
+}
+
+/// Decline an invite.
+pub async fn decline(client: &Client, room_id: &str) -> Result<(), String> {
+    invite(client, room_id)?
+        .leave()
+        .await
+        .map_err(|e| format!("Couldn't decline the invitation: {e}"))
+}
+
+fn invite(client: &Client, room_id: &str) -> Result<Room, String> {
+    let room_id = RoomId::parse(room_id).map_err(|e| format!("Bad room ID: {e}"))?;
+    match client.get_room(&room_id) {
+        Some(room) if room.state() == RoomState::Invited => Ok(room),
+        _ => Err("That invitation is no longer open.".to_owned()),
+    }
 }
 
 #[cfg(test)]

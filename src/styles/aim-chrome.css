@@ -206,6 +206,17 @@ body {
   text-shadow: 1px 1px 0 var(--c-hilite);
 }
 
+/* Compact button for inside lists, e.g. Accept/Decline on an invitation. */
+.aim-btn--small {
+  min-width: 0;
+  min-height: 17px;
+  padding: 0 6px;
+}
+
+.aim-btn--small:active:not(:disabled) {
+  padding: 2px 5px 0 7px;
+}
+
 /* Small flat toolbar buttons that only bevel on hover (formatting bar, etc.). */
 .aim-toolbar {
   display: flex;

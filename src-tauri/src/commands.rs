@@ -1,9 +1,14 @@
 //! The `#[tauri::command]` surface the windows call.
 
+use matrix_sdk::Client;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::{
-    matrix::{self, Session, rooms::Buddy, sync::Status},
+    matrix::{
+        self, Session,
+        rooms::{self, Buddy},
+        sync::Status,
+    },
     session, windows,
 };
 
@@ -64,4 +69,25 @@ pub fn sync_status(session: State<'_, Session>) -> Status {
 #[tauri::command]
 pub fn buddy_list(session: State<'_, Session>) -> Vec<Buddy> {
     session.buddies.lock().unwrap().clone()
+}
+
+/// Join the room of an invitation.
+#[tauri::command]
+pub async fn accept_invite(session: State<'_, Session>, room_id: String) -> Result<(), String> {
+    rooms::accept(&client(&session).await?, &room_id).await
+}
+
+/// Reject an invitation.
+#[tauri::command]
+pub async fn decline_invite(session: State<'_, Session>, room_id: String) -> Result<(), String> {
+    rooms::decline(&client(&session).await?, &room_id).await
+}
+
+/// The signed-on client. Cloned so the session isn't locked while it's used.
+async fn client(session: &Session) -> Result<Client, String> {
+    let signed = session.signed.lock().await;
+    signed
+        .as_ref()
+        .map(|s| s.client.clone())
+        .ok_or_else(|| "Not signed on.".to_owned())
 }

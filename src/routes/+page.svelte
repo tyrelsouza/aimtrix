@@ -9,6 +9,8 @@
   let status = $state<SyncStatus>({ state: "connecting" });
   let buddies = $state<Buddy[]>([]);
   let selected = $state<string | null>(null);
+  /** Invitations being accepted or declined. */
+  let responding = $state<string[]>([]);
   let busy = $state(false);
   let error = $state("");
 
@@ -24,6 +26,19 @@
       rooms: buddies.filter((b) => b.section === section),
     })).filter((g) => g.section !== "invitations" || g.rooms.length > 0),
   );
+
+  async function respond(command: "accept_invite" | "decline_invite", roomId: string) {
+    responding = [...responding, roomId];
+    error = "";
+    try {
+      // The room leaves Invitations on the next buddylist:update.
+      await invoke(command, { roomId });
+    } catch (e) {
+      error = String(e);
+    } finally {
+      responding = responding.filter((id) => id !== roomId);
+    }
+  }
 
   async function signOff() {
     busy = true;
@@ -63,6 +78,24 @@
                   />
                   {room.name}
                 </button>
+                {#if room.section === "invitations"}
+                  <div class="invite-actions">
+                    <button
+                      class="aim-btn aim-btn--small"
+                      disabled={responding.includes(room.roomId)}
+                      onclick={() => respond("accept_invite", room.roomId)}
+                    >
+                      Accept
+                    </button>
+                    <button
+                      class="aim-btn aim-btn--small"
+                      disabled={responding.includes(room.roomId)}
+                      onclick={() => respond("decline_invite", room.roomId)}
+                    >
+                      Decline
+                    </button>
+                  </div>
+                {/if}
               </li>
             {/each}
           </ul>
@@ -99,6 +132,12 @@
   }
   p {
     margin: 0;
+  }
+  .invite-actions {
+    display: flex;
+    gap: 4px;
+    /* Line up with the room name, past the icon. */
+    padding: 1px 0 3px 38px;
   }
   .buttons {
     display: flex;

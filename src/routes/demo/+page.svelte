@@ -88,10 +88,16 @@
             <li><button class="aim-list__item is-unread"><img class="aim-list__icon" src={DEFAULT_CHAT_ICON} alt="" />Secret Chat</button></li>
           </ul>
         </details>
-        <details class="aim-group">
+        <details class="aim-group" open>
           <summary>Invitations <span class="aim-group__count">(1)</span></summary>
           <ul class="aim-list">
-            <li><button class="aim-list__item">Invite Test</button></li>
+            <li>
+              <button class="aim-list__item"><img class="aim-list__icon" src={DEFAULT_CHAT_ICON} alt="" />Invite Test</button>
+              <div class="row" style="gap: 4px; padding: 1px 0 3px 38px">
+                <button class="aim-btn aim-btn--small">Accept</button>
+                <button class="aim-btn aim-btn--small">Decline</button>
+              </div>
+            </li>
           </ul>
         </details>
       </div>

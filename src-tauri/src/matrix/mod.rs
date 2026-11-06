@@ -504,4 +504,92 @@ mod tests {
         syncing.stop().await;
         alice.logout().await.unwrap();
     }
+
+    fn section_of(buddies: &[rooms::Buddy], room_id: &str) -> Option<rooms::Section> {
+        buddies
+            .iter()
+            .find(|b| b.room_id == room_id)
+            .map(|b| b.section)
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn accepting_invites_moves_them_to_the_right_group() {
+        use matrix_sdk::ruma::{
+            api::client::room::create_room::v3::{Request, RoomPreset},
+            user_id,
+        };
+        use rooms::Section;
+
+        let dir = tempfile::tempdir().unwrap();
+        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+            .await
+            .unwrap();
+        let syncing = sync::start(&alice, |_| {}).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let watcher = rooms::watch(syncing.room_list_service(), move |b| {
+            let _ = tx.send(b);
+        });
+
+        let bob_dir = tempfile::tempdir().unwrap();
+        let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
+            .await
+            .unwrap();
+        let invite = |name: Option<&str>, direct: bool, carol_too: bool| {
+            let mut request = Request::new();
+            request.name = name.map(ToOwned::to_owned);
+            request.is_direct = direct;
+            request.preset = Some(RoomPreset::TrustedPrivateChat);
+            request.invite = vec![user_id!("@alice:localhost").to_owned()];
+            if carol_too {
+                request.invite.push(user_id!("@carol:localhost").to_owned());
+            }
+            bob.create_room(request)
+        };
+        let dm = invite(None, true, false).await.unwrap();
+        let group = invite(Some("Accept Test Group"), false, true)
+            .await
+            .unwrap();
+        let declined = invite(Some("Decline Test"), false, false).await.unwrap();
+        let [dm_id, group_id, declined_id] =
+            [&dm, &group, &declined].map(|r| r.room_id().to_string());
+
+        wait_for_buddies(&mut rx, "three invitations", |b| {
+            [&dm_id, &group_id, &declined_id]
+                .iter()
+                .all(|id| section_of(b, id) == Some(Section::Invitations))
+        })
+        .await;
+
+        rooms::accept(&alice, &dm_id).await.unwrap();
+        rooms::accept(&alice, &group_id).await.unwrap();
+        rooms::decline(&alice, &declined_id).await.unwrap();
+        wait_for_buddies(
+            &mut rx,
+            "DM in Buddies, group in Chats, decline gone",
+            |b| {
+                section_of(b, &dm_id) == Some(Section::Buddies)
+                    && section_of(b, &group_id) == Some(Section::Chats)
+                    && section_of(b, &declined_id).is_none()
+            },
+        )
+        .await;
+        assert_eq!(
+            rooms::accept(&alice, &declined_id).await.unwrap_err(),
+            "That invitation is no longer open."
+        );
+
+        // Clean up: everyone leaves the test rooms.
+        for id in [&dm_id, &group_id] {
+            let room_id = matrix_sdk::ruma::RoomId::parse(id).unwrap();
+            alice.get_room(&room_id).unwrap().leave().await.unwrap();
+        }
+        for room in [dm, group, declined] {
+            room.leave().await.unwrap();
+        }
+        bob.logout().await.unwrap();
+        watcher.abort();
+        syncing.stop().await;
+        alice.logout().await.unwrap();
+    }
 }
