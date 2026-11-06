@@ -79,7 +79,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 - [x] **2.1 Room classification.** Write a pure function in `rooms.rs` that sorts rooms into DM vs. group and into Favorites/Buddies/Chats/Invitations, with unit tests. No UI. *Done when:* `cargo test` passes and covers stale `m.direct` and the `aimtrix.chat` override.
 - [x] **2.2 Room list events.** Subscribe to the room list and emit `buddylist:update`. *Done when:* a plain-text list in the main window updates live as rooms change.
 - [x] **2.3 Buddy List window.** Show collapsible groups with "(n)" counts and display names. *Done when:* it matches the test server's rooms.
-- [ ] **2.4 Unread and ordering.** Bold rooms with unread messages and sort by recent activity. *Done when:* a message sent from Element bolds the buddy and moves it up.
+- [x] **2.4 Unread and ordering.** Bold rooms with unread messages and sort by recent activity. *Done when:* a message sent from Element bolds the buddy and moves it up.
 - [ ] **2.5 Buddy Icons.** In `media.rs`, fetch avatar thumbnails (authenticated media) and cache them on disk. *Done when:* the list shows icons, and rooms without one show a default.
 - [ ] **2.6 Invitations.** Put invites in their own group with Accept and Decline. *Done when:* accepting an invite moves the room into the right group.
 
