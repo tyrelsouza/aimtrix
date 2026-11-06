@@ -56,6 +56,28 @@ pub fn open_recovery(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Label of the Set Up Recovery window.
+pub const SETUP_RECOVERY_LABEL: &str = "setup-recovery";
+
+/// Set Up Recovery: makes a recovery key for an account that has none.
+pub fn open_setup_recovery(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(SETUP_RECOVERY_LABEL) {
+        window.unminimize()?;
+        return window.set_focus();
+    }
+    WebviewWindowBuilder::new(
+        app,
+        SETUP_RECOVERY_LABEL,
+        WebviewUrl::App("/setup-recovery".into()),
+    )
+    .title("Set Up Recovery")
+    .inner_size(360.0, 290.0)
+    .resizable(false)
+    .center()
+    .build()?;
+    Ok(())
+}
+
 /// Label of the Verify window.
 pub const VERIFY_LABEL: &str = "verify";
 

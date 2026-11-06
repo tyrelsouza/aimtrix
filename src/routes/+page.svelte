@@ -132,14 +132,22 @@
     {#if error}
       <p class="aim-alert" role="alert">{error}</p>
     {/if}
-    {#if trust === "unverified" || recovery === "incomplete"}
+    {#if trust === "unverified" || recovery === "incomplete" || recovery === "disabled"}
       <p class="security">
-        <span class="grow">🔒 {trust === "unverified" ? "This computer isn't verified." : "Older messages are locked."}</span>
+        <span class="grow">
+          🔒 {trust === "unverified"
+            ? "This computer isn't verified."
+            : recovery === "incomplete"
+              ? "Older messages are locked."
+              : "Recovery isn't set up."}
+        </span>
         {#if trust === "unverified"}
           <button class="aim-btn aim-btn--small" onclick={verify}>Verify…</button>
         {/if}
         {#if recovery === "incomplete"}
           <button class="aim-btn aim-btn--small" onclick={() => invoke("open_recovery")}>Restore…</button>
+        {:else if recovery === "disabled" && trust !== "unverified"}
+          <button class="aim-btn aim-btn--small" onclick={() => invoke("open_setup_recovery")}>Set Up…</button>
         {/if}
       </p>
     {/if}

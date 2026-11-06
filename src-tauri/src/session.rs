@@ -102,6 +102,7 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
         if label.starts_with(windows::ROOM_LABEL_PREFIX)
             || label == windows::RECOVERY_LABEL
             || label == windows::VERIFY_LABEL
+            || label == windows::SETUP_RECOVERY_LABEL
         {
             let _ = window.close();
         }

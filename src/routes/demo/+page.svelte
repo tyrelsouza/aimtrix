@@ -167,6 +167,29 @@
     </div>
   </section>
 
+  <!-- Set Up Recovery -->
+  <section class="aim-window" style="width: 340px">
+    <div class="aim-titlebar">
+      <img class="aim-titlebar__icon" src={appIcon} alt="" />
+      <span class="aim-titlebar__title">Set Up Recovery</span>
+      <div class="aim-titlebar__controls">
+        <button class="aim-titlebar__btn aim-titlebar__btn--close" aria-label="Close"></button>
+      </div>
+    </div>
+    <div class="aim-window__body">
+      <p style="margin: 0">This is your recovery key. Write it down or save it somewhere safe, like a password manager:</p>
+      <code class="aim-field" style="height: auto; padding: 6px; font-family: monospace; text-align: center; word-spacing: 4px">
+        EsTd mQ2x 8Kfa Lr3p Vw9z Ny4b Ht7c Jk2s Pq6m Xe5g Wu8f Ra3d
+      </code>
+      <p style="margin: 0">You'll need it to read your encrypted messages on a new computer. AIMtrix won't show it again.</p>
+      <label class="row" style="align-items: center; gap: 4px"><input type="checkbox" /> I've saved my recovery key</label>
+      <div class="row end">
+        <button class="aim-btn">Copy</button>
+        <button class="aim-btn is-default" disabled>Done</button>
+      </div>
+    </div>
+  </section>
+
   <!-- IM window -->
   <section class="aim-window" style="width: 360px; height: 340px">
     <div class="aim-titlebar">

@@ -7,7 +7,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::{
     matrix::{
         self, Session,
-        crypto::{self, Recovery},
+        crypto::{self, Recovery, Setup},
         media,
         members::ChatRoom,
         rooms::{self, Buddy, Section},
@@ -338,4 +338,22 @@ fn verification(session: &Session) -> Result<std::sync::Arc<Flow>, String> {
         .unwrap()
         .clone()
         .ok_or_else(|| "There's no verification in progress.".to_owned())
+}
+
+/// Open Set Up Recovery, or focus it.
+#[tauri::command]
+pub fn open_setup_recovery(app: AppHandle) -> Result<(), String> {
+    windows::open_setup_recovery(&app).map_err(|e| e.to_string())
+}
+
+/// Whether recovery can be set up on this device.
+#[tauri::command]
+pub async fn setup_recovery_check(session: State<'_, Session>) -> Result<Setup, String> {
+    crypto::setup_check(&client(&session).await?).await
+}
+
+/// Set up a key backup and recovery. Returns the recovery key, to show once.
+#[tauri::command]
+pub async fn setup_recovery(session: State<'_, Session>) -> Result<String, String> {
+    crypto::set_up(&client(&session).await?).await
 }

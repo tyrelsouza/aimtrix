@@ -654,14 +654,15 @@ mod tests {
         }
     }
 
-    /// Apply diffs from `rx` until `want` holds; panic after 20 s.
+    /// Apply diffs from `rx` until `want` holds; panic after 30 s (room keys
+    /// can take a while to arrive when the dev server is busy).
     async fn wait_for_lines(
         lines: &mut Vec<timeline::Line>,
         rx: &mut tokio::sync::mpsc::UnboundedReceiver<timeline::Diff>,
         what: &str,
         want: impl Fn(&[timeline::Line]) -> bool,
     ) {
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         while !want(lines) {
             match tokio::time::timeout_at(deadline, rx.recv()).await {
                 Ok(Some(diff)) => apply(lines, diff),
@@ -2076,5 +2077,95 @@ mod tests {
             syncing.stop().await;
             client.logout().await.unwrap();
         }
+    }
+
+    /// Register a new user with the dev server's shared secret (see
+    /// `dev/seed.py`), password `aimtrix-test`. Deactivate it when done.
+    async fn register_throwaway_user(prefix: &str) -> String {
+        use hmac::{Hmac, Mac};
+        const ADMIN: &str = "http://localhost:8008/_synapse/admin/v1/register";
+        let user = format!("{prefix}-{}", rand::random::<u32>());
+        let http = matrix_sdk::reqwest::Client::new();
+        let get: serde_json::Value =
+            serde_json::from_str(&http.get(ADMIN).send().await.unwrap().text().await.unwrap())
+                .unwrap();
+        let nonce = get["nonce"].as_str().unwrap();
+        let mut mac = Hmac::<sha1::Sha1>::new_from_slice(b"aimtrix-dev-secret").unwrap();
+        mac.update(format!("{nonce}\0{user}\0aimtrix-test\0notadmin").as_bytes());
+        let body = serde_json::json!({
+            "nonce": nonce, "username": user, "password": "aimtrix-test", "admin": false,
+            "mac": hex::encode(mac.finalize().into_bytes()),
+        });
+        let response = http
+            .post(ADMIN)
+            .header("content-type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success(), "couldn't register {user}");
+        user
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn new_accounts_get_a_recovery_key_that_restores_elsewhere() {
+        let user = register_throwaway_user("setup").await;
+        // A new account gets a cross-signing identity at sign-on, so this
+        // device can set up recovery right away.
+        let first_dir = tempfile::tempdir().unwrap();
+        let first = login(first_dir.path(), PASS, HS, &user, "aimtrix-test")
+            .await
+            .unwrap();
+        let first_sync = sync::start(&first, |_| {}).await.unwrap();
+        wait_for_trust(&first, "the first device", verify::Trust::Verified).await;
+        wait_for_recovery(&first, "recovery before setup", crypto::Recovery::Disabled).await;
+        assert_eq!(crypto::setup_check(&first).await, Ok(crypto::Setup::Ready));
+        // A second device can't set it up: it doesn't have the identity's
+        // keys, so it has to verify first.
+        let second_dir = tempfile::tempdir().unwrap();
+        let second = login(second_dir.path(), PASS, HS, &user, "aimtrix-test")
+            .await
+            .unwrap();
+        let second_sync = sync::start(&second, |_| {}).await.unwrap();
+        wait_for_trust(&second, "the second device", verify::Trust::Unverified).await;
+        assert_eq!(
+            crypto::setup_check(&second).await,
+            Ok(crypto::Setup::VerifyFirst)
+        );
+
+        let recovery_key = crypto::set_up(&first).await.unwrap();
+        wait_for_recovery(&first, "recovery after setup", crypto::Recovery::Enabled).await;
+        assert_eq!(
+            crypto::setup_check(&first).await,
+            Ok(crypto::Setup::AlreadySetUp)
+        );
+
+        // The key restores the second device: identity and backup.
+        wait_for_recovery(
+            &second,
+            "recovery on the second",
+            crypto::Recovery::Incomplete,
+        )
+        .await;
+        crypto::recover(&second, &recovery_key).await.unwrap();
+        wait_for_recovery(&second, "recovery on the second", crypto::Recovery::Enabled).await;
+        wait_for_trust(&second, "the second device", verify::Trust::Verified).await;
+        assert!(second.encryption().backups().are_enabled().await);
+
+        second_sync.stop().await;
+        second.logout().await.unwrap();
+        first_sync.stop().await;
+        use matrix_sdk::ruma::api::client::uiaa::{AuthData, MatrixUserIdentifier, Password};
+        let password = Password::new(
+            MatrixUserIdentifier::new(user.clone()).into(),
+            "aimtrix-test".to_owned(),
+        );
+        // Signs out every device too.
+        first
+            .account()
+            .deactivate(None, Some(AuthData::Password(password)), true)
+            .await
+            .unwrap();
     }
 }
