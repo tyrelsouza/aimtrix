@@ -458,6 +458,11 @@ button.aim-list__item:focus-visible {
   color: var(--c-im-buddy);
 }
 
+.aim-msg__note {
+  color: var(--c-im-system);
+  font-style: italic;
+}
+
 .aim-msg--system {
   color: var(--c-im-system);
   font-style: italic;

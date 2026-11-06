@@ -2,15 +2,19 @@
 //!
 //! [`watch`] follows a room's [`Timeline`] and turns each change into a
 //! [`Diff`] of [`Line`]s. Every timeline item maps to exactly one line, so
-//! the window can apply the diffs by index.
+//! the window can apply the diffs by index. [`Watching::send`] sends
+//! through the same timeline, so a sent message shows up at once.
 
 use eyeball_im::VectorDiff;
 use futures_util::StreamExt;
 use matrix_sdk::{
     Client, RoomState,
-    ruma::{RoomId, UserId, events::room::message::MessageType},
+    ruma::{
+        RoomId, UserId,
+        events::room::message::{MessageType, RoomMessageEventContent},
+    },
 };
-use matrix_sdk_ui::timeline::{RoomExt, TimelineDetails, TimelineItem};
+use matrix_sdk_ui::timeline::{EventSendState, RoomExt, Timeline, TimelineDetails, TimelineItem};
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::async_runtime::{JoinHandle, spawn};
@@ -32,6 +36,8 @@ pub enum Line {
         body: String,
         /// `/me`: shown as "* Name text".
         emote: bool,
+        /// Ours, and the server didn't take it.
+        failed: bool,
         /// Milliseconds since the Unix epoch.
         timestamp: u64,
     },
@@ -57,12 +63,13 @@ pub enum Diff {
 }
 
 /// Follow a joined room's conversation. Returns the current lines; every
-/// later change goes to `on_diff`. Older history arrives as diffs too.
+/// later change goes to `on_diff`, until the [`Watching`] is dropped. Older
+/// history arrives as diffs too.
 pub async fn watch(
     client: &Client,
     room_id: &str,
     on_diff: impl Fn(Diff) + Send + 'static,
-) -> Result<(Vec<Line>, JoinHandle<()>), String> {
+) -> Result<(Vec<Line>, Watching), String> {
     let room_id = RoomId::parse(room_id).map_err(|e| format!("Bad room ID: {e}"))?;
     let room = match client.get_room(&room_id) {
         Some(room) if room.state() == RoomState::Joined => room,
@@ -72,30 +79,66 @@ pub async fn watch(
         .timeline()
         .await
         .map_err(|e| format!("Couldn't open the conversation: {e}"))?;
+    let timeline = Arc::new(timeline);
     let (items, mut diffs) = timeline.subscribe().await;
     let lines = items.iter().map(|item| line(item)).collect();
 
-    let task = spawn(async move {
-        // Paginating sends its items through `diffs`, so start it alongside.
-        let first_page = timeline.paginate_backwards(FIRST_PAGE);
-        let mut first_page = std::pin::pin!(first_page);
-        let mut paginating = true;
-        loop {
-            tokio::select! {
-                result = &mut first_page, if paginating => {
-                    paginating = false;
-                    if let Err(e) = result {
-                        eprintln!("Couldn't load history for {}: {e}", timeline.room().room_id());
-                    }
+    let task = spawn({
+        let timeline = timeline.clone();
+        async move {
+            // Both send their changes through `diffs`, so run them alongside.
+            // Sync loads members lazily, so without fetching them senders can
+            // lack display names.
+            let setup = async {
+                let (history, ()) = tokio::join!(
+                    timeline.paginate_backwards(FIRST_PAGE),
+                    timeline.fetch_members()
+                );
+                if let Err(e) = history {
+                    eprintln!(
+                        "Couldn't load history for {}: {e}",
+                        timeline.room().room_id()
+                    );
                 }
-                batch = diffs.next() => match batch {
-                    Some(batch) => batch.into_iter().map(diff).for_each(&on_diff),
-                    None => break,
-                },
+            };
+            let mut setup = std::pin::pin!(setup);
+            let mut setting_up = true;
+            loop {
+                tokio::select! {
+                    () = &mut setup, if setting_up => setting_up = false,
+                    batch = diffs.next() => match batch {
+                        Some(batch) => batch.into_iter().map(diff).for_each(&on_diff),
+                        None => break,
+                    },
+                }
             }
         }
     });
-    Ok((lines, task))
+    Ok((lines, Watching { timeline, task }))
+}
+
+/// A room's conversation being followed. Dropping it stops the diffs.
+pub struct Watching {
+    timeline: Arc<Timeline>,
+    task: JoinHandle<()>,
+}
+
+impl Watching {
+    /// Send a plain-text message. It shows up in the lines right away and is
+    /// encrypted first if the room is.
+    pub async fn send(&self, body: &str) -> Result<(), String> {
+        self.timeline
+            .send(RoomMessageEventContent::text_plain(body).into())
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("Couldn't send the message: {e}"))
+    }
+}
+
+impl Drop for Watching {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 fn diff(diff: VectorDiff<Arc<TimelineItem>>) -> Diff {
@@ -153,6 +196,10 @@ fn line(item: &TimelineItem) -> Line {
         own: event.is_own(),
         body: message.body().to_owned(),
         emote,
+        failed: matches!(
+            event.send_state(),
+            Some(EventSendState::SendingFailed { .. })
+        ),
         timestamp: event.timestamp().get().into(),
     }
 }
@@ -181,6 +228,7 @@ mod tests {
             own: false,
             body: "hi".into(),
             emote: false,
+            failed: false,
             timestamp: 5,
         };
         assert_eq!(
@@ -195,7 +243,7 @@ mod tests {
                 "value": {
                     "type": "message", "id": "1", "sender": "@bob:localhost",
                     "name": "Bob Brown", "own": false, "body": "hi",
-                    "emote": false, "timestamp": 5,
+                    "emote": false, "failed": false, "timestamp": 5,
                 },
             })
         );

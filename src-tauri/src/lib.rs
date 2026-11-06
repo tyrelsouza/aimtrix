@@ -29,7 +29,8 @@ pub fn run() {
             commands::accept_invite,
             commands::decline_invite,
             commands::open_room,
-            commands::room_timeline
+            commands::room_timeline,
+            commands::send_message
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

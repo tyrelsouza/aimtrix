@@ -117,6 +117,15 @@ pub async fn room_timeline(
     session::watch_timeline(&app, &client(&session).await?, &room_id).await
 }
 
+/// Send a plain-text message from a room's IM window.
+#[tauri::command]
+pub async fn send_message(app: AppHandle, room_id: String, body: String) -> Result<(), String> {
+    if body.trim().is_empty() {
+        return Err("Type a message first.".to_owned());
+    }
+    session::send_message(&app, &room_id, &body).await
+}
+
 /// The signed-on client. Cloned so the session isn't locked while it's used.
 async fn client(session: &Session) -> Result<Client, String> {
     let signed = session.signed.lock().await;

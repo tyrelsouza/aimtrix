@@ -28,7 +28,7 @@ pub struct Session {
     /// The latest Buddy List, for windows that open after it changed.
     pub buddies: std::sync::Mutex<Vec<rooms::Buddy>>,
     /// The conversation each open room window follows, by room ID.
-    pub timelines: std::sync::Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
+    pub timelines: std::sync::Mutex<HashMap<String, std::sync::Arc<timeline::Watching>>>,
 }
 
 pub struct Signed {
@@ -685,11 +685,14 @@ mod tests {
             from(true) && from(false)
         })
         .await;
-        assert!(
-            lines.iter().any(|line| matches!(line,
-                timeline::Line::Message { name, own: false, .. } if name == "Bob Brown")),
-            "Bob's messages carry his display name"
-        );
+        // Profiles can load just after the lines, updating them.
+        wait_for_lines(&mut lines, &mut diffs, "Bob's display name", |l| {
+            l.iter().any(|line| {
+                matches!(line,
+                timeline::Line::Message { name, own: false, .. } if name == "Bob Brown")
+            })
+        })
+        .await;
 
         let body = format!("timeline test {}", rand::random::<u32>());
         send_as("bob", &room_id, &body).await;
@@ -703,9 +706,100 @@ mod tests {
             "the new message is the last one"
         );
 
-        task.abort();
+        drop(task);
         watcher.abort();
         syncing.stop().await;
         alice.logout().await.unwrap();
+    }
+
+    /// Sign on as `user`, sync, and wait for a room on the list that `is_it`.
+    /// Returns the client, its sync, the list watcher and the room ID.
+    async fn sign_on_to_room(
+        dir: &Path,
+        user: &str,
+        is_it: impl Fn(&rooms::Buddy) -> bool + Send + 'static,
+    ) -> (
+        Client,
+        sync::Syncing,
+        tauri::async_runtime::JoinHandle<()>,
+        String,
+    ) {
+        let client = login(dir, PASS, HS, user, "aimtrix-test").await.unwrap();
+        let syncing = sync::start(&client, |_| {}).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let watcher = rooms::watch(syncing.room_list_service(), move |b| {
+            let _ = tx.send(b);
+        });
+        let room_id = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        wait_for_buddies(&mut rx, "the room", {
+            let room_id = room_id.clone();
+            move |b| match b.iter().find(|buddy| is_it(buddy)) {
+                Some(buddy) => {
+                    *room_id.lock().unwrap() = buddy.room_id.clone();
+                    true
+                }
+                None => false,
+            }
+        })
+        .await;
+        let room_id = room_id.lock().unwrap().clone();
+        (client, syncing, watcher, room_id)
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn sent_messages_show_at_once_and_reach_the_buddy() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let (alice, alice_sync, alice_list, room_id) =
+            sign_on_to_room(alice_dir.path(), "alice", |b| b.name == "Bob Brown").await;
+        let (tx, mut diffs) = tokio::sync::mpsc::unbounded_channel();
+        let (mut lines, watching) = timeline::watch(&alice, &room_id, move |d| {
+            let _ = tx.send(d);
+        })
+        .await
+        .unwrap();
+
+        let body = format!("send test {}\nsecond line", rand::random::<u32>());
+        watching.send(&body).await.unwrap();
+        wait_for_lines(&mut lines, &mut diffs, "Alice's own message", |l| {
+            said(l, "Alice Anderson", &body, true)
+        })
+        .await;
+
+        let bob_dir = tempfile::tempdir().unwrap();
+        let (bob, bob_sync, bob_list, _) = sign_on_to_room(bob_dir.path(), "bob", {
+            let room_id = room_id.clone();
+            move |b| b.room_id == room_id
+        })
+        .await;
+        let (tx, mut bob_diffs) = tokio::sync::mpsc::unbounded_channel();
+        let (mut bob_lines, bob_watching) = timeline::watch(&bob, &room_id, move |d| {
+            let _ = tx.send(d);
+        })
+        .await
+        .unwrap();
+        wait_for_lines(
+            &mut bob_lines,
+            &mut bob_diffs,
+            "Alice's message at Bob's end",
+            |l| said(l, "Alice Anderson", &body, false),
+        )
+        .await;
+        assert!(
+            !lines
+                .iter()
+                .any(|l| matches!(l, timeline::Line::Message { failed: true, .. })),
+            "nothing failed to send"
+        );
+
+        for (watching, list, syncing, client) in [
+            (watching, alice_list, alice_sync, alice),
+            (bob_watching, bob_list, bob_sync, bob),
+        ] {
+            drop(watching);
+            list.abort();
+            syncing.stop().await;
+            client.logout().await.unwrap();
+        }
     }
 }

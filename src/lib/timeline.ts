@@ -12,6 +12,8 @@ export type Line =
       own: boolean;
       body: string;
       emote: boolean;
+      /** Ours, and the server didn't take it. */
+      failed: boolean;
       /** Milliseconds since the Unix epoch. */
       timestamp: number;
     }

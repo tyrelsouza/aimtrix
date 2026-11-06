@@ -2,6 +2,8 @@
 //! broadcasts connection status and the Buddy List to windows, and handles a
 //! revoked token.
 
+use std::sync::Arc;
+
 use matrix_sdk::Client;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -45,9 +47,8 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
     signed.buddy_list.abort();
     signed.sync.stop().await;
     app.state::<Session>().buddies.lock().unwrap().clear();
-    for (_, task) in app.state::<Session>().timelines.lock().unwrap().drain() {
-        task.abort();
-    }
+    // Dropping each watch stops it.
+    app.state::<Session>().timelines.lock().unwrap().clear();
     for (label, window) in app.webview_windows() {
         if label.starts_with(windows::ROOM_LABEL_PREFIX) {
             let _ = window.close();
@@ -67,7 +68,7 @@ pub async fn watch_timeline(
     let key = windows::room_key(room_id);
     let event = format!("room:{key}:timeline_diff");
     let label = format!("{}{key}", windows::ROOM_LABEL_PREFIX);
-    let (lines, task) = timeline::watch(client, room_id, {
+    let (lines, watching) = timeline::watch(client, room_id, {
         let app = app.clone();
         move |diff| {
             if let Err(e) = app.emit_to(&label, &event, &diff) {
@@ -76,29 +77,36 @@ pub async fn watch_timeline(
         }
     })
     .await?;
-    let old = app
-        .state::<Session>()
+    // Replacing an earlier watch drops it, which stops it.
+    app.state::<Session>()
         .timelines
         .lock()
         .unwrap()
-        .insert(room_id.to_owned(), task);
-    if let Some(old) = old {
-        old.abort();
-    }
+        .insert(room_id.to_owned(), Arc::new(watching));
     Ok(lines)
 }
 
 /// Stop following a room's conversation, once its window is gone.
 pub fn unwatch_timeline(app: &AppHandle, room_id: &str) {
-    if let Some(task) = app
+    app.state::<Session>()
+        .timelines
+        .lock()
+        .unwrap()
+        .remove(room_id);
+}
+
+/// Send a plain-text message to a room whose window is open.
+pub async fn send_message(app: &AppHandle, room_id: &str, body: &str) -> Result<(), String> {
+    // Cloned out so the map isn't locked while sending.
+    let watching = app
         .state::<Session>()
         .timelines
         .lock()
         .unwrap()
-        .remove(room_id)
-    {
-        task.abort();
-    }
+        .get(room_id)
+        .cloned()
+        .ok_or_else(|| "That conversation isn't open.".to_owned())?;
+    watching.send(body).await
 }
 
 fn on_status(app: &AppHandle, status: Status) {

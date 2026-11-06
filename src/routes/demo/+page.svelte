@@ -130,6 +130,7 @@
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--self">Alice Anderson:</span> hey bob, you there?</p>
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> yep! what's up</p>
           <p class="aim-msg"><span class="aim-msg__time">(9:41 PM)</span><span class="aim-msg__name aim-msg__name--self">Alice Anderson:</span> testing AIMtrix</p>
+          <p class="aim-msg"><span class="aim-msg__name aim-msg__name--self">Alice Anderson:</span> did this send?<span class="aim-msg__note"> (not sent)</span></p>
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> nice, this is <b>bold</b> and <span style="color: #ff0000">red</span></p>
           <p class="aim-msg aim-msg--undecryptable"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> 🔒 Unable to decrypt this message yet.</p>
           <p class="aim-msg aim-msg--system">Bob Brown is away: "grabbing lunch"</p>
