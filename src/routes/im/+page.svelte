@@ -14,7 +14,13 @@
   let transcript: HTMLDivElement;
   let box: HTMLTextAreaElement;
 
-  const messages = $derived(lines.filter((l) => l.type === "message"));
+  /** Loading older messages. */
+  let loading = $state(false);
+  /** Set once `load_older` says there's no more history. */
+  let noMore = $state(false);
+
+  const shown = $derived(lines.filter((l) => l.type === "message" || l.type === "start"));
+  const atStart = $derived(noMore || lines.some((l) => l.type === "start"));
 
   // Keep the name current if the room is renamed.
   $effect(() =>
@@ -27,16 +33,50 @@
     watchTimeline(
       roomId,
       async (l) => {
-        // Follow new messages, unless you've scrolled up to read.
         const atBottom =
           transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 8;
+        const fromBottom = transcript.scrollHeight - transcript.scrollTop;
+        const firstBefore = shown[0]?.id;
         lines = l;
         await tick();
-        if (atBottom) transcript.scrollTop = transcript.scrollHeight;
+        if (atBottom) {
+          // Follow new messages, unless you've scrolled up to read.
+          transcript.scrollTop = transcript.scrollHeight;
+        } else if (shown[0]?.id !== firstBefore) {
+          // Older messages came in above: keep what you were reading in place.
+          transcript.scrollTop = transcript.scrollHeight - fromBottom;
+        }
+        fill();
       },
       (e) => (error = e),
     ),
   );
+
+  /** Load older messages when you scroll near the top. */
+  function scrolled() {
+    if (transcript.scrollTop < 40) loadOlder();
+  }
+
+  /** Until the transcript can scroll, there's no scrolling up to load more. */
+  function fill() {
+    if (transcript.scrollHeight <= transcript.clientHeight + 40) loadOlder();
+  }
+
+  async function loadOlder() {
+    if (loading || atStart) return;
+    loading = true;
+    try {
+      noMore = await invoke<boolean>("load_older", { roomId });
+    } catch (e) {
+      error = String(e);
+      // Don't retry in a loop; scrolling up tries again.
+      return;
+    } finally {
+      loading = false;
+    }
+    await tick();
+    fill();
+  }
 
   /** Enter sends; Shift+Enter and Alt+Enter start a new line. */
   function keydown(e: KeyboardEvent) {
@@ -74,10 +114,14 @@
 
 <div class="layout">
   <main class="aim-window__body">
-    <div class="aim-panel aim-transcript" bind:this={transcript}>
-      {#each messages as msg (msg.id)}
-        <!-- One line: the paragraph keeps whitespace, so markup spacing would show. -->
-        <p class="aim-msg" title={time(msg.timestamp)}><span class="aim-msg__name" class:aim-msg__name--self={msg.own} class:aim-msg__name--buddy={!msg.own}>{msg.emote ? `* ${msg.name}` : `${msg.name}:`}</span> {msg.body}{#if msg.failed}<span class="aim-msg__note"> (not sent)</span>{/if}</p>
+    <div class="aim-panel aim-transcript" bind:this={transcript} onscroll={scrolled}>
+      {#each shown as line (line.id)}
+        {#if line.type === "start"}
+          <p class="aim-msg aim-msg--system">This is the beginning of the conversation.</p>
+        {:else if line.type === "message"}
+          <!-- One line: the paragraph keeps whitespace, so markup spacing would show. -->
+          <p class="aim-msg" title={time(line.timestamp)}><span class="aim-msg__name" class:aim-msg__name--self={line.own} class:aim-msg__name--buddy={!line.own}>{line.emote ? `* ${line.name}` : `${line.name}:`}</span> {line.body}{#if line.failed}<span class="aim-msg__note"> (not sent)</span>{/if}</p>
+        {/if}
       {/each}
     </div>
     {#if error}
@@ -100,7 +144,10 @@
     </form>
   </main>
   <footer class="aim-statusbar">
-    <span class="aim-statusbar__section">{name}</span>
+    <!-- Here, not above the messages, so the text doesn't jump. -->
+    <span class="aim-statusbar__section" role="status">
+      {loading ? "Loading older messages…" : name}
+    </span>
   </footer>
 </div>
 

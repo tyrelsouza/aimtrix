@@ -14,13 +14,15 @@ use matrix_sdk::{
         events::room::message::{MessageType, RoomMessageEventContent},
     },
 };
-use matrix_sdk_ui::timeline::{EventSendState, RoomExt, Timeline, TimelineDetails, TimelineItem};
+use matrix_sdk_ui::timeline::{
+    EventSendState, RoomExt, Timeline, TimelineDetails, TimelineItem, VirtualTimelineItem,
+};
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::async_runtime::{JoinHandle, spawn};
 
-/// History to load when the window opens.
-const FIRST_PAGE: u16 = 50;
+/// History to load when the window opens, and each time you scroll up.
+const PAGE: u16 = 50;
 
 /// One line of the conversation.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -41,6 +43,8 @@ pub enum Line {
         /// Milliseconds since the Unix epoch.
         timestamp: u64,
     },
+    /// The room's first event is loaded: there's no more history.
+    Start { id: String },
     /// Not shown yet: other message types, state events, date dividers…
     Other { id: String },
 }
@@ -90,10 +94,8 @@ pub async fn watch(
             // Sync loads members lazily, so without fetching them senders can
             // lack display names.
             let setup = async {
-                let (history, ()) = tokio::join!(
-                    timeline.paginate_backwards(FIRST_PAGE),
-                    timeline.fetch_members()
-                );
+                let (history, ()) =
+                    tokio::join!(timeline.paginate_backwards(PAGE), timeline.fetch_members());
                 if let Err(e) = history {
                     eprintln!(
                         "Couldn't load history for {}: {e}",
@@ -124,6 +126,15 @@ pub struct Watching {
 }
 
 impl Watching {
+    /// Load a page of older history; it arrives as diffs. Returns whether
+    /// the start of the room was reached.
+    pub async fn load_older(&self) -> Result<bool, String> {
+        self.timeline
+            .paginate_backwards(PAGE)
+            .await
+            .map_err(|e| format!("Couldn't load older messages: {e}"))
+    }
+
     /// Send a plain-text message. It shows up in the lines right away and is
     /// encrypted first if the room is.
     pub async fn send(&self, body: &str) -> Result<(), String> {
@@ -174,7 +185,10 @@ fn diff(diff: VectorDiff<Arc<TimelineItem>>) -> Diff {
 fn line(item: &TimelineItem) -> Line {
     let id = item.unique_id().0.clone();
     let Some(event) = item.as_event() else {
-        return Line::Other { id };
+        return match item.as_virtual() {
+            Some(VirtualTimelineItem::TimelineStart) => Line::Start { id },
+            _ => Line::Other { id },
+        };
     };
     let Some(message) = event.content().as_message() else {
         return Line::Other { id };

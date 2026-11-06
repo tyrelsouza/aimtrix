@@ -97,16 +97,25 @@ pub fn unwatch_timeline(app: &AppHandle, room_id: &str) {
 
 /// Send a plain-text message to a room whose window is open.
 pub async fn send_message(app: &AppHandle, room_id: &str, body: &str) -> Result<(), String> {
-    // Cloned out so the map isn't locked while sending.
-    let watching = app
-        .state::<Session>()
+    watching(app, room_id)?.send(body).await
+}
+
+/// Load older history in a room whose window is open. Returns whether the
+/// start of the room was reached.
+pub async fn load_older(app: &AppHandle, room_id: &str) -> Result<bool, String> {
+    watching(app, room_id)?.load_older().await
+}
+
+/// The watch of an open room window's conversation. Cloned out so the map
+/// isn't locked while it's used.
+fn watching(app: &AppHandle, room_id: &str) -> Result<Arc<timeline::Watching>, String> {
+    app.state::<Session>()
         .timelines
         .lock()
         .unwrap()
         .get(room_id)
         .cloned()
-        .ok_or_else(|| "That conversation isn't open.".to_owned())?;
-    watching.send(body).await
+        .ok_or_else(|| "That conversation isn't open.".to_owned())
 }
 
 fn on_status(app: &AppHandle, status: Status) {

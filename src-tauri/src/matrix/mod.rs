@@ -814,4 +814,60 @@ mod tests {
             client.logout().await.unwrap();
         }
     }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn scrolling_back_reaches_the_first_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let (alice, syncing, list, room_id) =
+            sign_on_to_room(dir.path(), "alice", |b| b.name == "Test Chat").await;
+        let (tx, mut diffs) = tokio::sync::mpsc::unbounded_channel();
+        let (mut lines, watching) = timeline::watch(&alice, &room_id, move |d| {
+            let _ = tx.send(d);
+        })
+        .await
+        .unwrap();
+
+        // Far more pages than the seeded backlog needs.
+        let mut reached_start = false;
+        for _ in 0..20 {
+            if watching.load_older().await.unwrap() {
+                reached_start = true;
+                break;
+            }
+        }
+        assert!(reached_start, "never reached the start of the room");
+        wait_for_lines(
+            &mut lines,
+            &mut diffs,
+            "the first message and the start",
+            |l| {
+                let first = l.iter().find(|line| {
+                    matches!(
+                        line,
+                        timeline::Line::Message { .. } | timeline::Line::Start { .. }
+                    )
+                });
+                matches!(first, Some(timeline::Line::Start { .. }))
+                    && said(l, "Bob Brown", "backlog message 1", false)
+            },
+        )
+        .await;
+        // The backlog comes in order, oldest first.
+        let order: Vec<_> = lines
+            .iter()
+            .filter_map(|line| match line {
+                timeline::Line::Message { body, .. } => body
+                    .strip_prefix("backlog message ")
+                    .and_then(|n| n.parse::<u32>().ok()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(order, (1..=60).collect::<Vec<_>>());
+
+        drop(watching);
+        list.abort();
+        syncing.stop().await;
+        alice.logout().await.unwrap();
+    }
 }

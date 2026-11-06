@@ -126,6 +126,14 @@ pub async fn send_message(app: AppHandle, room_id: String, body: String) -> Resu
     session::send_message(&app, &room_id, &body).await
 }
 
+/// Load older messages in a room's IM window; they arrive as
+/// `room:<key>:timeline_diff` events. Returns whether the room's first
+/// message was reached.
+#[tauri::command]
+pub async fn load_older(app: AppHandle, room_id: String) -> Result<bool, String> {
+    session::load_older(&app, &room_id).await
+}
+
 /// The signed-on client. Cloned so the session isn't locked while it's used.
 async fn client(session: &Session) -> Result<Client, String> {
     let signed = session.signed.lock().await;

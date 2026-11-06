@@ -17,6 +17,8 @@ export type Line =
       /** Milliseconds since the Unix epoch. */
       timestamp: number;
     }
+  /** The room's first event is loaded: there's no more history. */
+  | { type: "start"; id: string }
   | { type: "other"; id: string };
 
 /** Mirrors `Diff` in src-tauri/src/matrix/timeline.rs. */
