@@ -70,7 +70,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 - [x] **0.3 AIM chrome CSS.** Build `src/styles/aim-chrome.css` with window frame, title bar, buttons, list, text box and status bar styles. *Done when:* a static demo page shows the pieces.
 
 ### Phase 1: Sign On
-- [ ] **1.1 First login.** Add `matrix-sdk` and a `login` command that takes homeserver, username and password. *Done when:* logging in as a test user returns the user ID (never log the token).
+- [x] **1.1 First login.** Add `matrix-sdk` and a `login` command that takes homeserver, username and password. *Done when:* logging in as a test user returns the user ID (never log the token).
 - [ ] **1.2 Sign On window.** Build the form UI, wire it to `login`, and show errors. *Done when:* a bad password shows an error and a good one closes the window.
 - [ ] **1.3 Session restore.** Keep the session in the OS keyring and use the SQLite store. Restore the session on launch and add `logout`. *Done when:* restarting the app skips Sign On, and logout brings it back.
 - [ ] **1.4 Sync.** Start syncing after login and show connection state (connecting, online, error). *Done when:* the status shows online and survives a network blip.

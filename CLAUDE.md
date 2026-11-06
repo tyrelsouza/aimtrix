@@ -6,6 +6,7 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 - Work through the `## Steps` checklist in `PLAN.md` one step at a time, in order. Don't start the next step unless asked.
 - A step is finished only when its "Done when" check passes. Then tick its box (`[x]`) in `PLAN.md`.
 - If a step turns out bigger than expected, split it into sub-steps in `PLAN.md` instead of doing it all at once.
+- Never commit. The user makes all commits themselves, outside Claude. Don't run `git commit` or other history-changing git commands, don't offer to commit, and don't comment on commit status.
 
 ## Stack
 - **Tauri v2** desktop app.
@@ -29,5 +30,5 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 - Install: `npm install` (the Tauri CLI is a dev dependency; no global `cargo tauri`)
 - Dev: `npm run tauri dev`
 - Type-check frontend: `npm run check`
-- Rust tests: `cargo test --manifest-path src-tauri/Cargo.toml`
+- Rust tests: `cargo test --manifest-path src-tauri/Cargo.toml`. Tests that need the dev homeserver are `#[ignore = "needs the dev homeserver"]`; run them with `-- --include-ignored` (server up and seeded). They must log out so no devices pile up on the test accounts.
 - Local test homeserver (see `dev/README.md`): `docker compose -f dev/docker-compose.yml up -d`, then `python3 dev/seed.py`. Users `alice`/`bob`/`carol`, password `aimtrix-test`, homeserver `http://localhost:8008`, Element Web at `http://localhost:8080`. Always test against this, never real accounts.
