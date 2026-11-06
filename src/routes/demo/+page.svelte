@@ -101,8 +101,9 @@
           </ul>
         </details>
       </div>
-      <div class="row" style="justify-content: space-between; align-items: center; gap: 4px">
-        🔒 Older messages are locked.
+      <div class="row" style="align-items: center; gap: 4px">
+        <span class="grow">🔒 This computer isn't verified.</span>
+        <button class="aim-btn aim-btn--small">Verify…</button>
         <button class="aim-btn aim-btn--small">Restore…</button>
       </div>
       <div class="row center">
@@ -139,6 +140,29 @@
       <div class="row end">
         <button class="aim-btn">Not Now</button>
         <button class="aim-btn is-default">Restore</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Verify This Computer -->
+  <section class="aim-window" style="width: 340px">
+    <div class="aim-titlebar">
+      <img class="aim-titlebar__icon" src={appIcon} alt="" />
+      <span class="aim-titlebar__title">Verify This Computer</span>
+      <div class="aim-titlebar__controls">
+        <button class="aim-titlebar__btn aim-titlebar__btn--close" aria-label="Close"></button>
+      </div>
+    </div>
+    <div class="aim-window__body">
+      <p style="margin: 0">Check that these emoji appear in the same order on <b>Firefox on Linux</b>:</p>
+      <div class="row center" style="flex-wrap: wrap; gap: 6px 10px; font-size: 11px; text-align: center">
+        {#each [["🎁", "Gift"], ["🔨", "Hammer"], ["😀", "Smiley"], ["🐷", "Pig"], ["🍕", "Pizza"], ["🤖", "Robot"], ["🎩", "Hat"]] as [symbol, description]}
+          <span style="min-width: 56px"><span style="display: block; font-size: 28px">{symbol}</span>{description}</span>
+        {/each}
+      </div>
+      <div class="row end">
+        <button class="aim-btn">They Don't Match</button>
+        <button class="aim-btn is-default">They Match</button>
       </div>
     </div>
   </section>

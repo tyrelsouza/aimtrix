@@ -33,5 +33,5 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 - Install: `npm install` (the Tauri CLI is a dev dependency; no global `cargo tauri`)
 - Dev: `npm run tauri dev`
 - Type-check frontend: `npm run check`
-- Rust tests: `cargo test --manifest-path src-tauri/Cargo.toml`. Tests that need the dev homeserver are `#[ignore = "needs the dev homeserver"]`; run them with `-- --include-ignored` (server up and seeded). They must log out so no devices pile up on the test accounts.
+- Rust tests: `cargo test --manifest-path src-tauri/Cargo.toml`. Tests that need the dev homeserver are `#[ignore = "needs the dev homeserver"]`; run them with `-- --include-ignored --test-threads=8` (server up and seeded; more threads overload the dev server and tests time out). They must log out so no devices pile up on the test accounts.
 - Local test homeserver (see `dev/README.md`): `docker compose -f dev/docker-compose.yml up -d`, then `python3 dev/seed.py`. Users `alice`/`bob`/`carol`, password `aimtrix-test`, homeserver `http://localhost:8008`, Element Web at `http://localhost:8080`. Always test against this, never real accounts.

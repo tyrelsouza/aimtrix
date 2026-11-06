@@ -13,6 +13,7 @@ use crate::{
         rooms::{self, Buddy, Section},
         sync::Status,
         timeline::Line,
+        verify::{Flow, Step, Trust},
     },
     session, windows,
 };
@@ -275,4 +276,66 @@ pub fn open_recovery(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn recover(session: State<'_, Session>, secret: String) -> Result<(), String> {
     crypto::recover(&client(&session).await?, &secret).await
+}
+
+/// Whether this device is verified. Changes arrive as `verification:trust`
+/// events.
+#[tauri::command]
+pub fn device_trust(session: State<'_, Session>) -> Trust {
+    *session.trust.lock().unwrap()
+}
+
+/// Ask your other sessions to verify this one, and open Verify.
+#[tauri::command]
+pub async fn verify_device(app: AppHandle, session: State<'_, Session>) -> Result<(), String> {
+    let flow = Flow::request(&client(&session).await?, {
+        let app = app.clone();
+        move |step| session::on_step(&app, step)
+    })
+    .await?;
+    session::start_verification(&app, flow);
+    Ok(())
+}
+
+/// Where the verification in progress is, if there is one. Changes arrive
+/// as `verification:step` events.
+#[tauri::command]
+pub fn verification_step(session: State<'_, Session>) -> Option<Step> {
+    session.verification_step.lock().unwrap().clone()
+}
+
+/// Accept a verification request from another session.
+#[tauri::command]
+pub async fn accept_verification(session: State<'_, Session>) -> Result<(), String> {
+    verification(&session)?.accept().await
+}
+
+/// Start comparing emoji, when the other session asked but waits for us.
+#[tauri::command]
+pub async fn start_verification(session: State<'_, Session>) -> Result<(), String> {
+    verification(&session)?.start().await
+}
+
+/// Say whether the emoji match.
+#[tauri::command]
+pub async fn confirm_verification(
+    session: State<'_, Session>,
+    matched: bool,
+) -> Result<(), String> {
+    verification(&session)?.confirm(matched).await
+}
+
+/// Stop the verification in progress, on both sides.
+#[tauri::command]
+pub async fn cancel_verification(session: State<'_, Session>) -> Result<(), String> {
+    verification(&session)?.cancel().await
+}
+
+fn verification(session: &Session) -> Result<std::sync::Arc<Flow>, String> {
+    session
+        .verification
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| "There's no verification in progress.".to_owned())
 }

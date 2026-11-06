@@ -8,6 +8,7 @@ pub mod members;
 pub mod rooms;
 pub mod sync;
 pub mod timeline;
+pub mod verify;
 
 use std::{
     collections::HashMap,
@@ -37,6 +38,12 @@ pub struct Session {
     /// Whether this device can read old messages, for windows that open
     /// after it changed.
     pub recovery: std::sync::Mutex<crypto::Recovery>,
+    /// Whether this device is verified, for windows that open after it
+    /// changed.
+    pub trust: std::sync::Mutex<verify::Trust>,
+    /// The verification in progress, if any, and where it is.
+    pub verification: std::sync::Mutex<Option<std::sync::Arc<verify::Flow>>>,
+    pub verification_step: std::sync::Mutex<Option<verify::Step>>,
 }
 
 pub struct Signed {
@@ -44,6 +51,8 @@ pub struct Signed {
     pub sync: sync::Syncing,
     pub buddy_list: tauri::async_runtime::JoinHandle<()>,
     pub recovery: tauri::async_runtime::JoinHandle<()>,
+    pub trust: tauri::async_runtime::JoinHandle<()>,
+    pub verification_requests: matrix_sdk::event_handler::EventHandlerHandle,
 }
 
 fn store_dir(data_dir: &Path) -> PathBuf {
@@ -1619,6 +1628,28 @@ mod tests {
         alice.logout().await.unwrap();
     }
 
+    /// Wait until `sender` knows `receiver`'s device, so a message it
+    /// encrypts now includes the key for it. A brand-new device reaches
+    /// other users' device lists through sync, which can lag under load.
+    async fn knows_device(sender: &Client, receiver: &Client) {
+        let (user, device) = (receiver.user_id().unwrap(), receiver.device_id().unwrap());
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        while sender
+            .encryption()
+            .get_device(user, device)
+            .await
+            .unwrap()
+            .is_none()
+        {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for {} to know {user}'s new device",
+                sender.user_id().unwrap()
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+
     #[tokio::test]
     #[ignore = "needs the dev homeserver"]
     async fn encrypted_rooms_send_and_receive_both_ways() {
@@ -1659,6 +1690,7 @@ mod tests {
                 watch_lines(&them, &room_id).await;
 
             let body = format!("e2ee from alice {}", rand::random::<u32>());
+            knows_device(&alice, &them).await;
             alice_watch.send(&body, None).await.unwrap();
             wait_for_lines(&mut their_lines, &mut their_diffs, "Alice's message", |l| {
                 said(l, "Alice Anderson", &body, false)
@@ -1666,6 +1698,7 @@ mod tests {
             .await;
 
             let body = format!("e2ee from {other} {}", rand::random::<u32>());
+            knows_device(&them, &alice).await;
             their_watch.send(&body, None).await.unwrap();
             wait_for_lines(&mut alice_lines, &mut alice_diffs, "the reply", |l| {
                 said(l, other_display, &body, false)
@@ -1697,6 +1730,7 @@ mod tests {
             sign_on_to_seed_room(carol_dir.path(), "carol", "dm-e2ee", "Alice Anderson").await;
         let (_, carol_watch, _) = watch_lines(&carol, &room_id).await;
         let body = format!("utd test {}", rand::random::<u32>());
+        knows_device(&carol, &first).await;
         carol_watch.send(&body, None).await.unwrap();
         wait_for_lines(&mut first_lines, &mut first_diffs, "Carol's message", |l| {
             said(l, "Carol Chen", &body, false)
@@ -1916,6 +1950,128 @@ mod tests {
             (second_watch, second_list, second_sync, second),
         ] {
             drop(watching);
+            list.abort();
+            syncing.stop().await;
+            client.logout().await.unwrap();
+        }
+    }
+
+    /// Wait for a step `is_it` from `rx`, skipping others; panic after 30 s.
+    async fn wait_for_step(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<verify::Step>,
+        what: &str,
+        is_it: impl Fn(&verify::Step) -> bool,
+    ) -> verify::Step {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut last = None;
+        loop {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(step)) if is_it(&step) => return step,
+                Ok(Some(step)) => last = Some(step),
+                _ => panic!("timed out waiting for {what}; last step {last:?}"),
+            }
+        }
+    }
+
+    /// Wait for `client`'s device trust to be `want`; panic after 30 s.
+    async fn wait_for_trust(client: &Client, what: &str, want: verify::Trust) {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = verify::watch_trust(client, move |trust| {
+            let _ = tx.send(trust);
+        });
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut last = None;
+        loop {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(trust)) if trust == want => break,
+                Ok(Some(trust)) => last = Some(trust),
+                _ => panic!("timed out waiting for {what} to be {want:?}; last {last:?}"),
+            }
+        }
+        task.abort();
+    }
+
+    /// Uses bob, for the cross-signing [`ensure_bob_recovery`] sets up.
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn emoji_verification_makes_a_new_device_trusted() {
+        // Bob's first device is verified (recovery brings the identity's
+        // keys) and listens for requests.
+        ensure_bob_recovery().await;
+        let first_dir = tempfile::tempdir().unwrap();
+        let (first, first_sync, first_list, _) =
+            sign_on_to_seed_room(first_dir.path(), "bob", "group-e2ee", "Secret Chat").await;
+        wait_for_recovery(
+            &first,
+            "recovery on the first device",
+            crypto::Recovery::Incomplete,
+        )
+        .await;
+        crypto::recover(&first, BOB_RECOVERY).await.unwrap();
+        wait_for_trust(&first, "the first device", verify::Trust::Verified).await;
+        let (tx, mut requests) = tokio::sync::mpsc::unbounded_channel();
+        let handler = verify::on_requests(&first, move |request| {
+            let _ = tx.send(request);
+        });
+
+        // A new device isn't, and asks to be.
+        let second_dir = tempfile::tempdir().unwrap();
+        let (second, second_sync, second_list, _) =
+            sign_on_to_seed_room(second_dir.path(), "bob", "group-e2ee", "Secret Chat").await;
+        wait_for_trust(&second, "the new device", verify::Trust::Unverified).await;
+        let (tx, mut second_steps) = tokio::sync::mpsc::unbounded_channel();
+        let second_flow = verify::Flow::request(&second, move |step| {
+            let _ = tx.send(step);
+        })
+        .await
+        .unwrap();
+        wait_for_step(&mut second_steps, "the request to go out", |s| {
+            *s == verify::Step::Waiting
+        })
+        .await;
+
+        // The first device accepts, and both show the same emoji.
+        let request = tokio::time::timeout(std::time::Duration::from_secs(30), requests.recv())
+            .await
+            .expect("the first device gets the request")
+            .unwrap();
+        let (tx, mut first_steps) = tokio::sync::mpsc::unbounded_channel();
+        let first_flow = verify::Flow::incoming(request, move |step| {
+            let _ = tx.send(step);
+        });
+        wait_for_step(
+            &mut first_steps,
+            "the incoming request",
+            |s| matches!(s, verify::Step::Incoming { device } if device == "AIMtrix"),
+        )
+        .await;
+        first_flow.accept().await.unwrap();
+        let is_compare = |s: &verify::Step| matches!(s, verify::Step::Compare { .. });
+        let first_emojis = wait_for_step(&mut first_steps, "emoji on the first", is_compare).await;
+        let second_emojis =
+            wait_for_step(&mut second_steps, "emoji on the second", is_compare).await;
+        let emojis = |step: verify::Step| match step {
+            verify::Step::Compare { emojis, .. } => emojis,
+            _ => unreachable!(),
+        };
+        let first_emojis = emojis(first_emojis);
+        assert_eq!(first_emojis.len(), 7);
+        assert_eq!(first_emojis, emojis(second_emojis));
+
+        // Both say they match: done, and the new device is now trusted.
+        second_flow.confirm(true).await.unwrap();
+        first_flow.confirm(true).await.unwrap();
+        let is_done = |s: &verify::Step| matches!(s, verify::Step::Done { .. });
+        wait_for_step(&mut first_steps, "done on the first", is_done).await;
+        wait_for_step(&mut second_steps, "done on the second", is_done).await;
+        wait_for_trust(&second, "the new device", verify::Trust::Verified).await;
+
+        first.remove_event_handler(handler);
+        drop((first_flow, second_flow));
+        for (list, syncing, client) in [
+            (first_list, first_sync, first),
+            (second_list, second_sync, second),
+        ] {
             list.abort();
             syncing.stop().await;
             client.logout().await.unwrap();

@@ -56,6 +56,30 @@ pub fn open_recovery(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Label of the Verify window.
+pub const VERIFY_LABEL: &str = "verify";
+
+/// Verify This Computer: compares emoji with another of your sessions.
+pub fn open_verify(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(VERIFY_LABEL) {
+        window.unminimize()?;
+        return window.set_focus();
+    }
+    let window = WebviewWindowBuilder::new(app, VERIFY_LABEL, WebviewUrl::App("/verify".into()))
+        .title("Verify This Computer")
+        .inner_size(360.0, 280.0)
+        .resizable(false)
+        .center()
+        .build()?;
+    let app = app.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::Destroyed = event {
+            session::end_verification(&app);
+        }
+    });
+    Ok(())
+}
+
 /// Open the window for `room_id`: an IM for a DM, a Chat Room for a group.
 /// There's one window per room; opening it again focuses it.
 pub fn open_room(app: &AppHandle, room_id: &str, name: &str, kind: Kind) -> tauri::Result<()> {

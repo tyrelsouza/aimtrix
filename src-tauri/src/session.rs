@@ -21,6 +21,7 @@ use crate::{
         rooms::{self, Buddy},
         sync::{self, Status},
         timeline::{self, Line},
+        verify::{self, Flow, Step, Trust},
     },
     windows,
 };
@@ -31,6 +32,10 @@ pub const STATUS_EVENT: &str = "sync:status";
 pub const BUDDY_LIST_EVENT: &str = "buddylist:update";
 /// Event carrying the new [`Recovery`] state to every window.
 pub const RECOVERY_EVENT: &str = "recovery:status";
+/// Event carrying whether this device is verified ([`Trust`]) to every window.
+pub const TRUST_EVENT: &str = "verification:trust";
+/// Event carrying the verification's new [`Step`] to the Verify window.
+pub const STEP_EVENT: &str = "verification:step";
 
 /// Start syncing `client` and make it the app's session.
 pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
@@ -49,11 +54,27 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
         let app = app.clone();
         move |state| on_recovery(&app, state, &asked)
     });
+    let trust = verify::watch_trust(&client, {
+        let app = app.clone();
+        move |trust| on_trust(&app, trust)
+    });
+    let verification_requests = verify::on_requests(&client, {
+        let app = app.clone();
+        move |request| {
+            let flow = Flow::incoming(request, {
+                let app = app.clone();
+                move |step| on_step(&app, step)
+            });
+            start_verification(&app, flow);
+        }
+    });
     *app.state::<Session>().signed.lock().await = Some(Signed {
         client,
         sync,
         buddy_list,
         recovery,
+        trust,
+        verification_requests,
     });
     Ok(())
 }
@@ -63,14 +84,25 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
     let signed = app.state::<Session>().signed.lock().await.take()?;
     signed.buddy_list.abort();
     signed.recovery.abort();
+    signed.trust.abort();
+    signed
+        .client
+        .remove_event_handler(signed.verification_requests);
     signed.sync.stop().await;
-    *app.state::<Session>().recovery.lock().unwrap() = Recovery::Unknown;
+    let state = app.state::<Session>();
+    *state.recovery.lock().unwrap() = Recovery::Unknown;
+    *state.trust.lock().unwrap() = Trust::Unknown;
+    *state.verification.lock().unwrap() = None;
+    *state.verification_step.lock().unwrap() = None;
     app.state::<Session>().buddies.lock().unwrap().clear();
     // Dropping each watch stops it.
     app.state::<Session>().timelines.lock().unwrap().clear();
     app.state::<Session>().members.lock().unwrap().clear();
     for (label, window) in app.webview_windows() {
-        if label.starts_with(windows::ROOM_LABEL_PREFIX) || label == windows::RECOVERY_LABEL {
+        if label.starts_with(windows::ROOM_LABEL_PREFIX)
+            || label == windows::RECOVERY_LABEL
+            || label == windows::VERIFY_LABEL
+        {
             let _ = window.close();
         }
     }
@@ -317,5 +349,50 @@ fn on_recovery(app: &AppHandle, state: Recovery, asked: &AtomicBool) {
         && let Err(e) = windows::open_recovery(app)
     {
         eprintln!("Couldn't open Restore Messages: {e}");
+    }
+}
+
+/// Share whether this device is verified.
+fn on_trust(app: &AppHandle, trust: Trust) {
+    *app.state::<Session>().trust.lock().unwrap() = trust;
+    if let Err(e) = app.emit(TRUST_EVENT, trust) {
+        eprintln!("Couldn't send whether this device is verified: {e}");
+    }
+}
+
+/// Share the verification's new step with the Verify window.
+pub fn on_step(app: &AppHandle, step: Step) {
+    *app.state::<Session>().verification_step.lock().unwrap() = Some(step.clone());
+    if let Err(e) = app.emit_to(windows::VERIFY_LABEL, STEP_EVENT, &step) {
+        eprintln!("Couldn't send the verification step: {e}");
+    }
+}
+
+/// Make `flow` the verification in progress, replacing any earlier one,
+/// and show it in the Verify window.
+pub fn start_verification(app: &AppHandle, flow: Flow) {
+    let state = app.state::<Session>();
+    // The flow may already have reported its first step.
+    *state.verification.lock().unwrap() = Some(Arc::new(flow));
+    if let Err(e) = windows::open_verify(app) {
+        eprintln!("Couldn't open Verify: {e}");
+    }
+}
+
+/// Forget the verification (its window closed), cancelling it on both sides
+/// if it's still going.
+pub fn end_verification(app: &AppHandle) {
+    let state = app.state::<Session>();
+    let flow = state.verification.lock().unwrap().take();
+    let step = state.verification_step.lock().unwrap().take();
+    let finished = matches!(step, Some(Step::Done { .. } | Step::Cancelled { .. }));
+    if let Some(flow) = flow
+        && !finished
+    {
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = flow.cancel().await {
+                eprintln!("{e}");
+            }
+        });
     }
 }

@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { describe, watchSyncStatus, type SyncStatus } from "$lib/sync";
   import { watchRecovery, type Recovery } from "$lib/recovery";
+  import { watchTrust, type Trust } from "$lib/verify";
   import { SECTIONS, watchBuddyList, type Buddy } from "$lib/buddylist";
   import { DEFAULT_CHAT_ICON, DEFAULT_DM_ICON } from "$lib/icons";
 
@@ -10,6 +11,7 @@
   let status = $state<SyncStatus>({ state: "connecting" });
   let buddies = $state<Buddy[]>([]);
   let recovery = $state<Recovery>("unknown");
+  let trust = $state<Trust>("unknown");
   let selected = $state<string | null>(null);
   /** Invitations being accepted or declined. */
   let responding = $state<string[]>([]);
@@ -20,6 +22,16 @@
   $effect(() => watchSyncStatus((s) => (status = s)));
   $effect(() => watchBuddyList((b) => (buddies = b)));
   $effect(() => watchRecovery((r) => (recovery = r)));
+  $effect(() => watchTrust((t) => (trust = t)));
+
+  async function verify() {
+    error = "";
+    try {
+      await invoke("verify_device");
+    } catch (e) {
+      error = String(e);
+    }
+  }
 
   // Invitations only show up when there are some.
   const groups = $derived(
@@ -120,10 +132,15 @@
     {#if error}
       <p class="aim-alert" role="alert">{error}</p>
     {/if}
-    {#if recovery === "incomplete"}
-      <p class="restore">
-        🔒 Older messages are locked.
-        <button class="aim-btn aim-btn--small" onclick={() => invoke("open_recovery")}>Restore…</button>
+    {#if trust === "unverified" || recovery === "incomplete"}
+      <p class="security">
+        <span class="grow">🔒 {trust === "unverified" ? "This computer isn't verified." : "Older messages are locked."}</span>
+        {#if trust === "unverified"}
+          <button class="aim-btn aim-btn--small" onclick={verify}>Verify…</button>
+        {/if}
+        {#if recovery === "incomplete"}
+          <button class="aim-btn aim-btn--small" onclick={() => invoke("open_recovery")}>Restore…</button>
+        {/if}
       </p>
     {/if}
     <div class="buttons">
@@ -160,11 +177,13 @@
     /* Line up with the room name, past the icon. */
     padding: 1px 0 3px 38px;
   }
-  .restore {
+  .security {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 4px;
+  }
+  .grow {
+    flex: 1;
   }
   .buttons {
     display: flex;

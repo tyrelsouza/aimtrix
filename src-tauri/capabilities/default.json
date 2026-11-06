@@ -6,7 +6,8 @@
     "signon",
     "main",
     "room-*",
-    "recovery"
+    "recovery",
+    "verify"
   ],
   "permissions": [
     "core:default",

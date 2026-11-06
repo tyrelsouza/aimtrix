@@ -46,7 +46,14 @@ pub fn run() {
             commands::save_attachment,
             commands::recovery_status,
             commands::open_recovery,
-            commands::recover
+            commands::recover,
+            commands::device_trust,
+            commands::verify_device,
+            commands::verification_step,
+            commands::accept_verification,
+            commands::start_verification,
+            commands::confirm_verification,
+            commands::cancel_verification
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
