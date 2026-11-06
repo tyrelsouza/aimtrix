@@ -22,11 +22,14 @@ pub struct Session {
     pub signed: Mutex<Option<Signed>>,
     /// The latest connection status, for windows that open after it changed.
     pub status: std::sync::Mutex<sync::Status>,
+    /// The latest Buddy List, for windows that open after it changed.
+    pub buddies: std::sync::Mutex<Vec<rooms::Buddy>>,
 }
 
 pub struct Signed {
     pub client: Client,
     pub sync: sync::Syncing,
+    pub buddy_list: tauri::async_runtime::JoinHandle<()>,
 }
 
 fn store_dir(data_dir: &Path) -> PathBuf {
@@ -286,5 +289,87 @@ mod tests {
         remove_store(&dir.path().join("nope")).unwrap();
         remove_store(dir.path()).unwrap();
         assert!(!dir.path().exists());
+    }
+
+    /// Wait up to 20 s for a Buddy List on `rx` that passes `want`.
+    async fn wait_for_buddies(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<Vec<rooms::Buddy>>,
+        what: &str,
+        want: impl Fn(&[rooms::Buddy]) -> bool,
+    ) {
+        let found = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            let mut last = Vec::new();
+            while let Some(buddies) = rx.recv().await {
+                if want(&buddies) {
+                    return;
+                }
+                last = buddies;
+            }
+            panic!("Buddy List stream ended before {what}; last: {last:#?}");
+        });
+        found
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {what}"));
+    }
+
+    fn has(buddies: &[rooms::Buddy], name: &str, section: rooms::Section) -> bool {
+        buddies
+            .iter()
+            .any(|b| b.name == name && b.section == section)
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn buddy_list_shows_seeded_rooms_and_updates_live() {
+        use matrix_sdk::ruma::{api::client::room::create_room::v3::Request, user_id};
+        use rooms::Section;
+
+        let dir = tempfile::tempdir().unwrap();
+        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+            .await
+            .unwrap();
+        let syncing = sync::start(&alice, |_| {}).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let watcher = rooms::watch(syncing.room_list_service(), move |b| {
+            let _ = tx.send(b);
+        });
+
+        wait_for_buddies(&mut rx, "the seeded rooms", |b| {
+            has(b, "Bob Brown", Section::Buddies)
+                && has(b, "Carol Chen", Section::Buddies)
+                && has(b, "Test Chat", Section::Favorites)
+                && has(b, "Secret Chat", Section::Chats)
+                && has(b, "Invite Test", Section::Invitations)
+        })
+        .await;
+
+        // Bob invites Alice to a new room; it must show up without restarting.
+        let bob_dir = tempfile::tempdir().unwrap();
+        let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
+            .await
+            .unwrap();
+        let mut request = Request::new();
+        request.name = Some("Live Update Test".to_owned());
+        request.invite = vec![user_id!("@alice:localhost").to_owned()];
+        let room = bob.create_room(request).await.unwrap();
+
+        wait_for_buddies(&mut rx, "the new invite", |b| {
+            has(b, "Live Update Test", Section::Invitations)
+        })
+        .await;
+
+        // Clean up: Alice declines, Bob leaves, both sign off.
+        let invite = alice.get_room(room.room_id()).unwrap();
+        invite.leave().await.unwrap();
+        wait_for_buddies(&mut rx, "the declined invite to go", |b| {
+            !b.iter().any(|b| b.name == "Live Update Test")
+        })
+        .await;
+        room.leave().await.unwrap();
+        bob.logout().await.unwrap();
+
+        watcher.abort();
+        syncing.stop().await;
+        alice.logout().await.unwrap();
     }
 }

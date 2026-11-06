@@ -23,6 +23,8 @@ matrix-sdk = "0.19"
 keyring = "4"
 rand = "0.10.3"
 matrix-sdk-ui = "0.19"
+eyeball-im = "0.9"
+futures-util = "0.3"
 tokio = { version = "1.54.1", features = ["macros", "sync", "time"] }
 
 
@@ -36,4 +38,6 @@ strip = true
 
 [dev-dependencies]
 tempfile = "3.27.0"
+eyeball-im = "0.9"
+futures-util = "0.3"
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }

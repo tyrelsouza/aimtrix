@@ -3,7 +3,7 @@
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::{
-    matrix::{self, Session, sync::Status},
+    matrix::{self, Session, rooms::Buddy, sync::Status},
     session, windows,
 };
 
@@ -58,4 +58,10 @@ pub async fn whoami(session: State<'_, Session>) -> Result<Option<String>, Strin
 #[tauri::command]
 pub fn sync_status(session: State<'_, Session>) -> Status {
     session.status.lock().unwrap().clone()
+}
+
+/// The current Buddy List. Changes arrive as `buddylist:update` events.
+#[tauri::command]
+pub fn buddy_list(session: State<'_, Session>) -> Vec<Buddy> {
+    session.buddies.lock().unwrap().clone()
 }

@@ -1,5 +1,6 @@
 //! Glue between the Matrix session and the app: starts and stops syncing,
-//! broadcasts connection status to windows, and handles a revoked token.
+//! broadcasts connection status and the Buddy List to windows, and handles a
+//! revoked token.
 
 use matrix_sdk::Client;
 use tauri::{AppHandle, Emitter, Manager};
@@ -7,6 +8,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::{
     matrix::{
         self, Session, Signed,
+        rooms::{self, Buddy},
         sync::{self, Status},
     },
     windows,
@@ -14,6 +16,8 @@ use crate::{
 
 /// Event carrying the new [`Status`] to every window.
 pub const STATUS_EVENT: &str = "sync:status";
+/// Event carrying the whole Buddy List (`Vec<Buddy>`) to every window.
+pub const BUDDY_LIST_EVENT: &str = "buddylist:update";
 
 /// Start syncing `client` and make it the app's session.
 pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
@@ -22,14 +26,24 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
         move |status| on_status(&app, status)
     })
     .await?;
-    *app.state::<Session>().signed.lock().await = Some(Signed { client, sync });
+    let buddy_list = rooms::watch(sync.room_list_service(), {
+        let app = app.clone();
+        move |buddies| on_buddies(&app, buddies)
+    });
+    *app.state::<Session>().signed.lock().await = Some(Signed {
+        client,
+        sync,
+        buddy_list,
+    });
     Ok(())
 }
 
 /// Stop syncing and hand back the client, if signed on.
 pub async fn end(app: &AppHandle) -> Option<Client> {
     let signed = app.state::<Session>().signed.lock().await.take()?;
+    signed.buddy_list.abort();
     signed.sync.stop().await;
+    app.state::<Session>().buddies.lock().unwrap().clear();
     Some(signed.client)
 }
 
@@ -42,6 +56,13 @@ fn on_status(app: &AppHandle, status: Status) {
     if status == Status::SignedOut {
         let app = app.clone();
         tauri::async_runtime::spawn(async move { signed_out(&app).await });
+    }
+}
+
+fn on_buddies(app: &AppHandle, buddies: Vec<Buddy>) {
+    *app.state::<Session>().buddies.lock().unwrap() = buddies.clone();
+    if let Err(e) = app.emit(BUDDY_LIST_EVENT, &buddies) {
+        eprintln!("Couldn't send the Buddy List to windows: {e}");
     }
 }
 

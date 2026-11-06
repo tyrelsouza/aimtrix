@@ -55,6 +55,8 @@ dependencies = [
 name = "aimtrix"
 version = "0.1.0"
 dependencies = [
+ "eyeball-im",
+ "futures-util",
  "keyring",
  "matrix-sdk",
  "matrix-sdk-ui",

@@ -3,7 +3,10 @@
 use std::{sync::Arc, time::Duration};
 
 use matrix_sdk::{Client, SessionChange};
-use matrix_sdk_ui::sync_service::{State, SyncService};
+use matrix_sdk_ui::{
+    RoomListService,
+    sync_service::{State, SyncService},
+};
 use serde::Serialize;
 use tauri::async_runtime::{JoinHandle, spawn};
 
@@ -34,6 +37,10 @@ pub struct Syncing {
 }
 
 impl Syncing {
+    pub fn room_list_service(&self) -> Arc<RoomListService> {
+        self.service.room_list_service()
+    }
+
     pub async fn stop(self) {
         // Stop reporting first so stopping doesn't show up as a status change.
         self.watcher.abort();
