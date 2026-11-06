@@ -38,7 +38,7 @@ None of these block the project. The architecture below handles all three.
 ## Architecture
 **The Matrix client runs in the Rust core, using `matrix-sdk` (matrix-rust-sdk).** Each webview window is a thin UI layer.
 - Why Rust rather than matrix-js-sdk in the webview: Tauri gives each window its own JS context. A JS client would have to live in one window and relay to the others, and its IndexedDB crypto store does not handle being shared. In the Rust core, a single `Client` (with an SQLite store and crypto) serves every window through Tauri commands and events. Element X uses the same SDK, so the E2EE, sliding sync, `RoomListService` and `Timeline` APIs are well tested.
-- **Frontend:** TypeScript with a small framework (Svelte or Solid) and hand-written CSS for Win98/XP-style window chrome. Each window type is its own route.
+- **Frontend:** SvelteKit (Svelte 5, TypeScript, static adapter in SPA mode) and hand-written CSS for Win98/XP-style window chrome. Each window type is its own route.
 - **Windows:** the Buddy List is the main window. Each IM or Chat Room opens its own `WebviewWindow`, labeled `room-<roomId-hash>`, and opening an existing one focuses it. A Sign On window handles login.
 - **IPC:**
   - Commands: `login`, `logout`, `open_room`, `send_message`, `send_typing`, `paginate_back`, `set_away`, `verify_*`, `recover_with_key`.
@@ -66,7 +66,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 
 ### Phase 0: Foundations
 - [x] **0.1 Test homeserver.** Add `dev/docker-compose.yml` with Synapse (presence enabled) and a seed script that creates 3 users, a DM, and a 3-person group, each in an encrypted and an unencrypted version. *Done when:* Element Web can log in as each user and see the rooms.
-- [ ] **0.2 Scaffold.** Run `git init` and create a Tauri v2 app with a TypeScript + Svelte/Solid frontend. *Done when:* `cargo tauri dev` opens an empty window.
+- [x] **0.2 Scaffold.** Run `git init` and create a Tauri v2 app with a TypeScript + Svelte/Solid frontend. *Done when:* `npm run tauri dev` opens an empty window.
 - [ ] **0.3 AIM chrome CSS.** Build `styles/aim-chrome.css` with window frame, title bar, buttons, list, text box and status bar styles. *Done when:* a static demo page shows the pieces.
 
 ### Phase 1: Sign On
@@ -113,7 +113,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 - [ ] **6.5 Block.** Block and unblock buddies (ignore user). *Done when:* a blocked user's messages are hidden.
 - [ ] **6.6 Preferences window.** Settings for sounds, auto-reply and fonts. *Done when:* settings persist across restarts.
 - [ ] **6.7 Auto-reply.** When away, auto-reply once per conversation. Off by default. *Done when:* it replies once, not on every message.
-- [ ] **6.8 Packaging.** Build Linux packages (AppImage/deb) with `cargo tauri build`. *Done when:* the package installs and runs on a clean machine.
+- [ ] **6.8 Packaging.** Build Linux packages (AppImage/deb) with `npm run tauri build`. *Done when:* the package installs and runs on a clean machine.
 
 ## Risks and decisions to make during the build
 - **Presence disabled on many homeservers:** if presence is off, put DMs in "Buddies" ordered by recent activity rather than splitting Online/Offline. Use real online/offline groups only when the server supports presence.
@@ -124,7 +124,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 ## Verification
 - **Local test homeserver:** run Synapse or conduwuit in Docker with presence enabled. Create 3 test users, a DM between 2 of them and a 3-person group, both encrypted.
 - **Unit tests** (`cargo test`): room classification and grouping, plus timeline-item → display-line formatting.
-- **Manual end-to-end** (`cargo tauri dev`):
+- **Manual end-to-end** (`npm run tauri dev`):
   - Sign on, then check the buddy list groups and icons.
   - Open the DM and check it gets an IM window. Exchange messages with Element (web) as the other user, including formatting and typing.
   - Open the group and check it gets a Chat Room window with members.

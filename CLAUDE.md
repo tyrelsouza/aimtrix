@@ -10,7 +10,7 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 ## Stack
 - **Tauri v2** desktop app.
 - **Rust core** (`src-tauri/`): runs a single `matrix-sdk` (matrix-rust-sdk) `Client` with an SQLite store and E2EE. All Matrix logic lives here.
-- **Frontend** (`src/`): TypeScript with Svelte or Solid and hand-written Win98/XP-style CSS. Windows are thin views with no Matrix SDK in JS.
+- **Frontend** (`src/`): SvelteKit (Svelte 5, TypeScript, `adapter-static` SPA mode, `ssr = false`) and hand-written Win98/XP-style CSS. One route per window type. Windows are thin views with no Matrix SDK in JS.
 
 ## Architecture rules
 - One Matrix session, owned by the Rust core. Windows talk to it only through `#[tauri::command]`s (`src-tauri/src/commands.rs`) and Tauri events (`buddylist:update`, `room:<id>:timeline_diff`, `room:<id>:typing`, `presence:update`, `verification:*`).
@@ -25,6 +25,8 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 - Store the session in the OS keyring, not in plain files.
 
 ## Commands
-- Dev: `cargo tauri dev`
+- Install: `npm install` (the Tauri CLI is a dev dependency; no global `cargo tauri`)
+- Dev: `npm run tauri dev`
+- Type-check frontend: `npm run check`
 - Rust tests: `cargo test --manifest-path src-tauri/Cargo.toml`
 - Local test homeserver (see `dev/README.md`): `docker compose -f dev/docker-compose.yml up -d`, then `python3 dev/seed.py`. Users `alice`/`bob`/`carol`, password `aimtrix-test`, homeserver `http://localhost:8008`, Element Web at `http://localhost:8080`. Always test against this, never real accounts.
