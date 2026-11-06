@@ -19,7 +19,10 @@ pub async fn login(
 ) -> Result<String, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let client = matrix::sign_on(&data_dir, &homeserver, &username, &password).await?;
-    let user_id = client.user_id().expect("logged in client has a user ID").to_string();
+    let user_id = client
+        .user_id()
+        .expect("logged in client has a user ID")
+        .to_string();
     session::begin(&app, client).await?;
 
     windows::open_buddy_list(&app).map_err(|e| e.to_string())?;
@@ -45,7 +48,10 @@ pub async fn logout(app: AppHandle, window: WebviewWindow) -> Result<(), String>
 #[tauri::command]
 pub async fn whoami(session: State<'_, Session>) -> Result<Option<String>, String> {
     let signed = session.signed.lock().await;
-    Ok(signed.as_ref().and_then(|s| s.client.user_id()).map(|u| u.to_string()))
+    Ok(signed
+        .as_ref()
+        .and_then(|s| s.client.user_id())
+        .map(|u| u.to_string()))
 }
 
 /// The current connection status. Changes arrive as `sync:status` events.

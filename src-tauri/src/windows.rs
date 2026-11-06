@@ -21,7 +21,11 @@ pub fn open_sign_on(app: &AppHandle, signed_out: bool) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("signon") {
         return window.set_focus();
     }
-    let url = if signed_out { "/signon?signed-out" } else { "/signon" };
+    let url = if signed_out {
+        "/signon?signed-out"
+    } else {
+        "/signon"
+    };
     WebviewWindowBuilder::new(app, "signon", WebviewUrl::App(url.into()))
         .title("Sign On")
         .inner_size(250.0, 300.0)

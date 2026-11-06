@@ -1,6 +1,7 @@
 //! The single Matrix session owned by the Rust core: sign on, resume, sign off.
 
 mod keyring;
+pub mod rooms;
 pub mod sync;
 
 use std::{
@@ -48,16 +49,24 @@ pub async fn sign_on(
     let saved = SavedSession {
         homeserver: client.homeserver().to_string(),
         store_passphrase: passphrase,
-        session: client.matrix_auth().session().expect("logged in client has a session"),
+        session: client
+            .matrix_auth()
+            .session()
+            .expect("logged in client has a session"),
     };
-    spawn_blocking(move || keyring::save(&saved)).await.map_err(|e| e.to_string())??;
+    spawn_blocking(move || keyring::save(&saved))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(client)
 }
 
 /// Resume the saved session, if there is one. Works offline: the token is
 /// only checked once syncing starts.
 pub async fn resume(data_dir: &Path) -> Result<Option<Client>, String> {
-    let Some(saved) = spawn_blocking(keyring::load).await.map_err(|e| e.to_string())?? else {
+    let Some(saved) = spawn_blocking(keyring::load)
+        .await
+        .map_err(|e| e.to_string())??
+    else {
         return Ok(None);
     };
     restore(&store_dir(data_dir), &saved).await.map(Some)
@@ -75,7 +84,9 @@ pub async fn sign_off(data_dir: &Path, client: Client) -> Result<(), String> {
 
 /// Forget the saved session and its store without contacting the server.
 pub async fn forget(data_dir: &Path) -> Result<(), String> {
-    spawn_blocking(keyring::forget).await.map_err(|e| e.to_string())??;
+    spawn_blocking(keyring::forget)
+        .await
+        .map_err(|e| e.to_string())??;
     remove_store(&store_dir(data_dir))
 }
 
@@ -147,7 +158,9 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn login_returns_user_id() {
         let dir = tempfile::tempdir().unwrap();
-        let client = login(dir.path(), PASS, HS, "alice", "aimtrix-test").await.unwrap();
+        let client = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+            .await
+            .unwrap();
         assert_eq!(client.user_id().unwrap(), "@alice:localhost");
         // Don't leave a device behind on the test account.
         client.logout().await.unwrap();
@@ -157,14 +170,18 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn login_rejects_bad_password() {
         let dir = tempfile::tempdir().unwrap();
-        let err = login(dir.path(), PASS, HS, "alice", "wrong").await.unwrap_err();
+        let err = login(dir.path(), PASS, HS, "alice", "wrong")
+            .await
+            .unwrap_err();
         assert_eq!(err, "Incorrect screen name or password.");
     }
 
     #[tokio::test]
     async fn login_rejects_unreachable_homeserver() {
         let dir = tempfile::tempdir().unwrap();
-        let err = login(dir.path(), PASS, "http://127.0.0.1:9", "alice", "x").await.unwrap_err();
+        let err = login(dir.path(), PASS, "http://127.0.0.1:9", "alice", "x")
+            .await
+            .unwrap_err();
         assert!(err.starts_with("Couldn't reach homeserver"), "{err}");
     }
 
@@ -172,7 +189,9 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn restore_resumes_session_from_store() {
         let dir = tempfile::tempdir().unwrap();
-        let client = login(dir.path(), PASS, HS, "bob", "aimtrix-test").await.unwrap();
+        let client = login(dir.path(), PASS, HS, "bob", "aimtrix-test")
+            .await
+            .unwrap();
         let mut saved = SavedSession {
             homeserver: client.homeserver().to_string(),
             store_passphrase: PASS.to_owned(),
@@ -181,7 +200,10 @@ mod tests {
         drop(client);
 
         saved.store_passphrase = "wrong".to_owned();
-        assert!(restore(dir.path(), &saved).await.is_err(), "wrong passphrase must not open the store");
+        assert!(
+            restore(dir.path(), &saved).await.is_err(),
+            "wrong passphrase must not open the store"
+        );
 
         saved.store_passphrase = PASS.to_owned();
         let client = restore(dir.path(), &saved).await.unwrap();
@@ -191,7 +213,10 @@ mod tests {
     }
 
     /// Wait up to 20 s for `want` to arrive on `rx`.
-    async fn wait_for(rx: &mut tokio::sync::mpsc::UnboundedReceiver<sync::Status>, want: sync::Status) {
+    async fn wait_for(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<sync::Status>,
+        want: sync::Status,
+    ) {
         let found = tokio::time::timeout(std::time::Duration::from_secs(20), async {
             while let Some(status) = rx.recv().await {
                 if status == want {
@@ -200,16 +225,22 @@ mod tests {
             }
             panic!("status stream ended before {want:?}");
         });
-        found.await.unwrap_or_else(|_| panic!("timed out waiting for {want:?}"));
+        found
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {want:?}"));
     }
 
     #[tokio::test]
     #[ignore = "needs the dev homeserver"]
     async fn sync_goes_online() {
         let dir = tempfile::tempdir().unwrap();
-        let client = login(dir.path(), PASS, HS, "carol", "aimtrix-test").await.unwrap();
+        let client = login(dir.path(), PASS, HS, "carol", "aimtrix-test")
+            .await
+            .unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let syncing = sync::start(&client, move |s| tx.send(s).unwrap()).await.unwrap();
+        let syncing = sync::start(&client, move |s| tx.send(s).unwrap())
+            .await
+            .unwrap();
 
         wait_for(&mut rx, sync::Status::Connecting).await;
         wait_for(&mut rx, sync::Status::Online).await;
@@ -222,9 +253,13 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn sync_reports_revoked_token_as_signed_out() {
         let dir = tempfile::tempdir().unwrap();
-        let client = login(dir.path(), PASS, HS, "carol", "aimtrix-test").await.unwrap();
+        let client = login(dir.path(), PASS, HS, "carol", "aimtrix-test")
+            .await
+            .unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let syncing = sync::start(&client, move |s| tx.send(s).unwrap()).await.unwrap();
+        let syncing = sync::start(&client, move |s| tx.send(s).unwrap())
+            .await
+            .unwrap();
         wait_for(&mut rx, sync::Status::Online).await;
 
         // Revoke the token from "another client" sharing the same session.
@@ -234,7 +269,12 @@ mod tests {
             store_passphrase: PASS.to_owned(),
             session: client.matrix_auth().session().unwrap(),
         };
-        restore(other_dir.path(), &saved).await.unwrap().logout().await.unwrap();
+        restore(other_dir.path(), &saved)
+            .await
+            .unwrap()
+            .logout()
+            .await
+            .unwrap();
 
         wait_for(&mut rx, sync::Status::SignedOut).await;
         syncing.stop().await;

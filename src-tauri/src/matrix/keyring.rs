@@ -35,7 +35,9 @@ pub fn load() -> Result<Option<SavedSession>, String> {
 
 pub fn save(saved: &SavedSession) -> Result<(), String> {
     let json = serde_json::to_string(saved).expect("SavedSession serializes");
-    entry()?.set_password(&json).map_err(|e| format!("Couldn't save session to keyring: {e}"))
+    entry()?
+        .set_password(&json)
+        .map_err(|e| format!("Couldn't save session to keyring: {e}"))
 }
 
 pub fn forget() -> Result<(), String> {

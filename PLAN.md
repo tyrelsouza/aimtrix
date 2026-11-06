@@ -76,7 +76,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 - [x] **1.4 Sync.** Start syncing after login and show connection state (connecting, online, error). If the server rejects the saved token (`M_UNKNOWN_TOKEN`, e.g. signed out from another client), forget the session and show Sign On. *Done when:* the status shows online and survives a network blip.
 
 ### Phase 2: Buddy List
-- [ ] **2.1 Room classification.** Write a pure function in `rooms.rs` that sorts rooms into DM vs. group and into Favorites/Buddies/Chats/Invitations, with unit tests. No UI. *Done when:* `cargo test` passes and covers stale `m.direct` and the `aimtrix.chat` override.
+- [x] **2.1 Room classification.** Write a pure function in `rooms.rs` that sorts rooms into DM vs. group and into Favorites/Buddies/Chats/Invitations, with unit tests. No UI. *Done when:* `cargo test` passes and covers stale `m.direct` and the `aimtrix.chat` override.
 - [ ] **2.2 Room list events.** Subscribe to the room list and emit `buddylist:update`. *Done when:* a plain-text list in the main window updates live as rooms change.
 - [ ] **2.3 Buddy List window.** Show collapsible groups with "(n)" counts and display names. *Done when:* it matches the test server's rooms.
 - [ ] **2.4 Unread and ordering.** Bold rooms with unread messages and sort by recent activity. *Done when:* a message sent from Element bolds the buddy and moves it up.
