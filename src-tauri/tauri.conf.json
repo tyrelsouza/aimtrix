@@ -10,17 +10,7 @@
     "frontendDist": "../build"
   },
   "app": {
-    "windows": [
-      {
-        "label": "signon",
-        "url": "/signon",
-        "title": "Sign On",
-        "width": 250,
-        "height": 300,
-        "resizable": false,
-        "center": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

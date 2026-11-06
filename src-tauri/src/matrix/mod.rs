@@ -1,19 +1,86 @@
-//! The single Matrix session owned by the Rust core.
+//! The single Matrix session owned by the Rust core: sign on, resume, sign off.
+
+mod keyring;
+
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 use matrix_sdk::{Client, ruma::api::error::ErrorKind};
-use tauri::async_runtime::Mutex;
+use rand::distr::{Alphanumeric, SampleString};
+use tauri::async_runtime::{Mutex, spawn_blocking};
+
+use keyring::SavedSession;
 
 /// The signed-on client, shared by every window. `None` until sign-on.
 #[derive(Default)]
 pub struct Session(pub Mutex<Option<Client>>);
 
-/// Log in with a username and password.
+fn store_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("matrix-store")
+}
+
+/// Sign on with a password, and save the session so the next launch can resume.
+pub async fn sign_on(
+    data_dir: &Path,
+    homeserver: &str,
+    username: &str,
+    password: &str,
+) -> Result<Client, String> {
+    // A store belongs to one device, so every sign-on starts a fresh one.
+    let store = store_dir(data_dir);
+    remove_store(&store)?;
+    let passphrase = Alphanumeric.sample_string(&mut rand::rng(), 32);
+
+    let client = login(&store, &passphrase, homeserver, username, password).await?;
+    let saved = SavedSession {
+        homeserver: client.homeserver().to_string(),
+        store_passphrase: passphrase,
+        session: client.matrix_auth().session().expect("logged in client has a session"),
+    };
+    spawn_blocking(move || keyring::save(&saved)).await.map_err(|e| e.to_string())??;
+    Ok(client)
+}
+
+/// Resume the saved session, if there is one. Works offline: the token is
+/// only checked once syncing starts.
+pub async fn resume(data_dir: &Path) -> Result<Option<Client>, String> {
+    let Some(saved) = spawn_blocking(keyring::load).await.map_err(|e| e.to_string())?? else {
+        return Ok(None);
+    };
+    restore(&store_dir(data_dir), &saved).await.map(Some)
+}
+
+/// Sign off: delete this device on the server, then forget it locally. Local
+/// cleanup happens even if the server can't be reached.
+pub async fn sign_off(data_dir: &Path, client: Client) -> Result<(), String> {
+    if let Err(e) = client.logout().await {
+        eprintln!("Server-side logout failed, forgetting the session anyway: {e}");
+    }
+    drop(client);
+    forget(data_dir).await
+}
+
+/// Forget the saved session and its store without contacting the server.
+pub async fn forget(data_dir: &Path) -> Result<(), String> {
+    spawn_blocking(keyring::forget).await.map_err(|e| e.to_string())??;
+    remove_store(&store_dir(data_dir))
+}
+
+/// Log in with a password into a new store at `store`.
 ///
 /// `homeserver` is a server name (discovered via `.well-known`) or a full URL.
-/// The client has no persistent store yet; that comes with session restore.
-pub async fn login(homeserver: &str, username: &str, password: &str) -> Result<Client, String> {
+async fn login(
+    store: &Path,
+    passphrase: &str,
+    homeserver: &str,
+    username: &str,
+    password: &str,
+) -> Result<Client, String> {
     let client = Client::builder()
         .server_name_or_homeserver_url(homeserver)
+        .sqlite_store(store, Some(passphrase))
         .build()
         .await
         .map_err(|e| format!("Couldn't reach homeserver: {e}"))?;
@@ -32,18 +99,44 @@ pub async fn login(homeserver: &str, username: &str, password: &str) -> Result<C
     Ok(client)
 }
 
-/// These need the dev homeserver: `docker compose -f dev/docker-compose.yml up -d`,
-/// `python3 dev/seed.py`, then `cargo test -- --ignored`.
+/// Reopen the store at `store` and restore the saved session into it.
+async fn restore(store: &Path, saved: &SavedSession) -> Result<Client, String> {
+    let client = Client::builder()
+        .homeserver_url(&saved.homeserver)
+        .sqlite_store(store, Some(&saved.store_passphrase))
+        .build()
+        .await
+        .map_err(|e| format!("Couldn't open the session store: {e}"))?;
+    client
+        .restore_session(saved.session.clone())
+        .await
+        .map_err(|e| format!("Couldn't restore the session: {e}"))?;
+    Ok(client)
+}
+
+fn remove_store(store: &Path) -> Result<(), String> {
+    match std::fs::remove_dir_all(store) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Couldn't clear the old session store: {e}")),
+    }
+}
+
+/// Tests marked `ignore` need the dev homeserver: `docker compose -f
+/// dev/docker-compose.yml up -d`, `python3 dev/seed.py`, then
+/// `cargo test -- --include-ignored`. None of them touch the OS keyring.
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const HS: &str = "http://localhost:8008";
+    const PASS: &str = "store-passphrase";
 
     #[tokio::test]
     #[ignore = "needs the dev homeserver"]
     async fn login_returns_user_id() {
-        let client = login(HS, "alice", "aimtrix-test").await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let client = login(dir.path(), PASS, HS, "alice", "aimtrix-test").await.unwrap();
         assert_eq!(client.user_id().unwrap(), "@alice:localhost");
         // Don't leave a device behind on the test account.
         client.logout().await.unwrap();
@@ -52,13 +145,45 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs the dev homeserver"]
     async fn login_rejects_bad_password() {
-        let err = login(HS, "alice", "wrong").await.unwrap_err();
+        let dir = tempfile::tempdir().unwrap();
+        let err = login(dir.path(), PASS, HS, "alice", "wrong").await.unwrap_err();
         assert_eq!(err, "Incorrect screen name or password.");
     }
 
     #[tokio::test]
     async fn login_rejects_unreachable_homeserver() {
-        let err = login("http://127.0.0.1:9", "alice", "x").await.unwrap_err();
+        let dir = tempfile::tempdir().unwrap();
+        let err = login(dir.path(), PASS, "http://127.0.0.1:9", "alice", "x").await.unwrap_err();
         assert!(err.starts_with("Couldn't reach homeserver"), "{err}");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn restore_resumes_session_from_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = login(dir.path(), PASS, HS, "bob", "aimtrix-test").await.unwrap();
+        let mut saved = SavedSession {
+            homeserver: client.homeserver().to_string(),
+            store_passphrase: PASS.to_owned(),
+            session: client.matrix_auth().session().unwrap(),
+        };
+        drop(client);
+
+        saved.store_passphrase = "wrong".to_owned();
+        assert!(restore(dir.path(), &saved).await.is_err(), "wrong passphrase must not open the store");
+
+        saved.store_passphrase = PASS.to_owned();
+        let client = restore(dir.path(), &saved).await.unwrap();
+        // A real server round trip proves the restored token works.
+        assert_eq!(client.whoami().await.unwrap().user_id, "@bob:localhost");
+        client.logout().await.unwrap();
+    }
+
+    #[test]
+    fn remove_store_ignores_missing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        remove_store(&dir.path().join("nope")).unwrap();
+        remove_store(dir.path()).unwrap();
+        assert!(!dir.path().exists());
     }
 }

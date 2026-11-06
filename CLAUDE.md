@@ -16,6 +16,7 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 
 ## Architecture rules
 - One Matrix session, owned by the Rust core. Windows talk to it only through `#[tauri::command]`s (`src-tauri/src/commands.rs`) and Tauri events (`buddylist:update`, `room:<id>:timeline_diff`, `room:<id>:typing`, `presence:update`, `verification:*`).
+- Windows are created in code (`src-tauri/src/windows.rs`), not in `tauri.conf.json`. On launch `startup()` in `src-tauri/src/lib.rs` resumes the saved session into the Buddy List or opens Sign On.
 - The Buddy List is the main window. Each IM or Chat Room gets its own `WebviewWindow`, labeled `room-<roomId-hash>`. Opening a room that already has a window focuses that window.
 - DM vs. group: a room is a DM if it is in `m.direct` OR has ≤2 joined+invited members. The `aimtrix.chat` room tag overrides this and forces a Chat Room. Keep this logic in `src-tauri/src/matrix/rooms.rs`, with unit tests.
 - E2EE is required in v1: recovery key restore, SAS emoji verification, and a visible "unable to decrypt" placeholder that retries.
