@@ -12,12 +12,13 @@
   "app": {
     "windows": [
       {
-        "label": "main",
-        "title": "AIMtrix",
-        "width": 260,
-        "height": 540,
-        "minWidth": 200,
-        "minHeight": 300
+        "label": "signon",
+        "url": "/signon",
+        "title": "Sign On",
+        "width": 250,
+        "height": 300,
+        "resizable": false,
+        "center": true
       }
     ],
     "security": {

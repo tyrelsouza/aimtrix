@@ -271,6 +271,15 @@ textarea.aim-field {
   gap: 2px;
 }
 
+/* Inline error or warning text, e.g. a failed sign-on. Use role="alert". */
+.aim-alert {
+  margin: 0;
+  color: #a00000;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* ---------- Group box ---------- */
 
 .aim-groupbox {

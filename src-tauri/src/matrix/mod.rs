@@ -1,6 +1,6 @@
 //! The single Matrix session owned by the Rust core.
 
-use matrix_sdk::Client;
+use matrix_sdk::{Client, ruma::api::error::ErrorKind};
 use tauri::async_runtime::Mutex;
 
 /// The signed-on client, shared by every window. `None` until sign-on.
@@ -23,7 +23,11 @@ pub async fn login(homeserver: &str, username: &str, password: &str) -> Result<C
         .login_username(username, password)
         .initial_device_display_name("AIMtrix")
         .await
-        .map_err(|e| format!("Sign on failed: {e}"))?;
+        .map_err(|e| match e.client_api_error_kind() {
+            Some(ErrorKind::Forbidden) => "Incorrect screen name or password.".to_owned(),
+            Some(ErrorKind::UserDeactivated) => "This account has been deactivated.".to_owned(),
+            _ => format!("Sign on failed: {e}"),
+        })?;
 
     Ok(client)
 }
@@ -49,7 +53,7 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn login_rejects_bad_password() {
         let err = login(HS, "alice", "wrong").await.unwrap_err();
-        assert!(err.starts_with("Sign on failed"), "{err}");
+        assert_eq!(err, "Incorrect screen name or password.");
     }
 
     #[tokio::test]

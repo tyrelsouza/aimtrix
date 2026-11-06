@@ -41,6 +41,7 @@
           <label class="aim-label">Password<input class="aim-field" type="password" value="aimtrix-test" /></label>
         </div>
       </fieldset>
+      <p class="aim-alert" role="alert">Incorrect screen name or password.</p>
       <div class="row end">
         <button class="aim-btn">Setup</button>
         <button class="aim-btn is-default">Sign On</button>

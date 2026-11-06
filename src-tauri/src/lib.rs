@@ -5,7 +5,7 @@ mod matrix;
 pub fn run() {
     tauri::Builder::default()
         .manage(matrix::Session::default())
-        .invoke_handler(tauri::generate_handler![commands::login])
+        .invoke_handler(tauri::generate_handler![commands::login, commands::whoami])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
