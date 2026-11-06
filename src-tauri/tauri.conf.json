@@ -17,13 +17,33 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "deb",
+      "appimage"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "category": "SocialNetworking",
+    "publisher": "Tyrel Souza",
+    "copyright": "© 2026 Tyrel Souza. All rights reserved.",
+    "shortDescription": "A Matrix chat client that looks like AIM",
+    "longDescription": "AIMtrix is a Matrix chat client styled after AOL Instant Messenger: a Buddy List, a window for each IM and Chat Room, Buddy Icons, away messages and end-to-end encryption. Not affiliated with AOL.",
+    "linux": {
+      "deb": {
+        "section": "net",
+        "recommends": [
+          "gnome-keyring | kwalletmanager",
+          "fonts-noto-color-emoji"
+        ],
+        "depends": [
+          "libc6 (>= 2.35)"
+        ]
+      }
+    }
   }
 }

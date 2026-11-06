@@ -1,0 +1,23 @@
+<!--
+  AIMtrix app icon: original art. A yellow speech bubble with "typing"
+  dots, matching the title-bar glyph in /demo. Regenerate the PNG/ICO/ICNS
+  sizes with: npx tauri icon src-tauri/icons/app-icon.svg
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Drop shadow, offset down-right like Win98 chrome. -->
+  <path
+    d="M184 200h704a64 64 0 0 1 64 64v400a64 64 0 0 1-64 64H472L280 904V728H184a64 64 0 0 1-64-64V264a64 64 0 0 1 64-64z"
+    fill="#000" opacity="0.25"
+  />
+  <!-- The bubble. -->
+  <path
+    d="M144 160h704a64 64 0 0 1 64 64v400a64 64 0 0 1-64 64H432L240 864V688H144a64 64 0 0 1-64-64V224a64 64 0 0 1 64-64z"
+    fill="#ffd400" stroke="#000" stroke-width="48" stroke-linejoin="round"
+  />
+  <!-- Highlight along the top, for a little depth. -->
+  <path d="M152 224h688" stroke="#fff6a8" stroke-width="40" stroke-linecap="round" />
+  <!-- Typing dots. -->
+  <circle cx="320" cy="440" r="64" fill="#000" />
+  <circle cx="496" cy="440" r="64" fill="#000" />
+  <circle cx="672" cy="440" r="64" fill="#000" />
+</svg>
