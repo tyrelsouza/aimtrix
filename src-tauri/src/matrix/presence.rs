@@ -10,7 +10,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use matrix_sdk::{
@@ -84,6 +84,8 @@ pub struct Own {
 #[derive(Default)]
 struct State {
     own: Own,
+    /// When we went away, while we are. Editing the away message keeps it.
+    away_since: Option<SystemTime>,
     known: HashMap<OwnedUserId, Status>,
     /// Everyone the list has asked about, polled regularly.
     wanted: HashSet<OwnedUserId>,
@@ -142,6 +144,12 @@ impl Tracker {
         self.state.lock().unwrap().own.clone()
     }
 
+    /// Our away message and when we went away, while we're away.
+    pub fn away(&self) -> Option<(String, SystemTime)> {
+        let state = self.state.lock().unwrap();
+        Some((state.own.away.clone()?, state.away_since?))
+    }
+
     /// `user`'s status, or `None` if the server has no presence (or we
     /// don't know yet). Starts following `user`; until the first answer they
     /// count as offline.
@@ -177,9 +185,23 @@ impl Tracker {
         }
         let own = self.client.user_id().ok_or("Not signed on.")?;
         // Store it first, so a heartbeat in between sends the new state.
-        let old = std::mem::replace(&mut self.state.lock().unwrap().own.away, message.clone());
+        let (old, old_since) = {
+            let mut state = self.state.lock().unwrap();
+            let old_since = state.away_since;
+            state.away_since = match (&state.own.away, &message) {
+                (_, None) => None,
+                (None, Some(_)) => Some(SystemTime::now()),
+                (Some(_), Some(_)) => old_since,
+            };
+            (
+                std::mem::replace(&mut state.own.away, message.clone()),
+                old_since,
+            )
+        };
         if let Err(e) = set(&self.client, own, message.as_deref()).await {
-            self.state.lock().unwrap().own.away = old;
+            let mut state = self.state.lock().unwrap();
+            state.own.away = old;
+            state.away_since = old_since;
             return Err(format!("Couldn't update your away message: {e}"));
         }
         self.heartbeat_sent.notify_one();

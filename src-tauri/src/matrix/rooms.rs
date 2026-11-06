@@ -181,7 +181,8 @@ pub fn watch(
     })
 }
 
-async fn buddy(room: &RoomListItem, icons: &Arc<Icons>, presence: &Tracker) -> Option<Buddy> {
+/// What classification needs to know about `room`, without presence.
+async fn facts(room: &Room) -> RoomFacts {
     let membership = match room.state() {
         RoomState::Joined => Membership::Joined,
         RoomState::Invited => Membership::Invited,
@@ -194,7 +195,7 @@ async fn buddy(room: &RoomListItem, icons: &Arc<Icons>, presence: &Tracker) -> O
         .ok()
         .flatten()
         .is_some_and(|tags| tags.keys().any(|tag| tag.as_ref() == CHAT_TAG));
-    let mut facts = RoomFacts {
+    RoomFacts {
         membership,
         // Also checks the invite's `is_direct` flag, which `m.direct` lacks
         // until we join.
@@ -203,7 +204,17 @@ async fn buddy(room: &RoomListItem, icons: &Arc<Icons>, presence: &Tracker) -> O
         favourite: room.is_favourite(),
         chat_tag,
         presence: None,
-    };
+    }
+}
+
+/// Whether `room` opens as an IM or a Chat Room.
+pub async fn kind_of(room: &Room) -> Kind {
+    kind(&facts(room).await)
+}
+
+async fn buddy(room: &RoomListItem, icons: &Arc<Icons>, presence: &Tracker) -> Option<Buddy> {
+    let mut facts = facts(room).await;
+    let membership = facts.membership;
     let kind = kind(&facts);
     let mut away_message = None;
     let other = match kind {

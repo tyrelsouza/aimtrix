@@ -30,7 +30,7 @@ pub fn open_sign_on(app: &AppHandle, signed_out: bool) -> tauri::Result<()> {
     };
     WebviewWindowBuilder::new(app, "signon", WebviewUrl::App(url.into()))
         .title("Sign On")
-        .inner_size(250.0, 300.0)
+        .inner_size(260.0, 350.0)
         .resizable(false)
         .center()
         .build()?;
@@ -107,7 +107,7 @@ pub fn open_away(app: &AppHandle) -> tauri::Result<()> {
     }
     WebviewWindowBuilder::new(app, AWAY_LABEL, WebviewUrl::App("/away".into()))
         .title("Away Message")
-        .inner_size(320.0, 240.0)
+        .inner_size(320.0, 260.0)
         .resizable(false)
         .center()
         .build()?;

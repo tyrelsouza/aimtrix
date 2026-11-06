@@ -8,12 +8,16 @@
     watchOwnPresence,
     type OwnPresence,
   } from "$lib/presence";
+  import { watchPreferences } from "$lib/preferences";
 
   let message = $state(DEFAULT_AWAY_MESSAGE);
   let own = $state<OwnPresence>({ supported: null, away: null });
   let busy = $state(false);
   let error = $state("");
   let filled = false;
+  let autoReply = $state(false);
+
+  $effect(() => watchPreferences((p) => (autoReply = p.autoReply)));
 
   $effect(() =>
     watchOwnPresence((p) => {
@@ -56,6 +60,15 @@
     ></textarea>
   </label>
 
+  {#if own.supported !== false}
+    <p class="auto-reply">
+      <span>Auto-reply is {autoReply ? "on: IMs get this message once" : "off"}.</span>
+      <button type="button" class="aim-btn aim-btn--small" onclick={() => invoke("open_preferences")}>
+        Preferences…
+      </button>
+    </p>
+  {/if}
+
   {#if error}
     <p class="aim-alert" role="alert">{error}</p>
   {:else if own.supported === false}
@@ -82,6 +95,12 @@
   .grow {
     flex: 1;
     min-height: 0;
+  }
+  .auto-reply {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
   }
   .actions {
     display: flex;

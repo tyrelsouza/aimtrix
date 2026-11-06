@@ -37,7 +37,8 @@
       <fieldset class="aim-groupbox">
         <legend>Matrix account</legend>
         <div class="stack">
-          <label class="aim-label">Homeserver<input class="aim-field" value="http://localhost:8008" /></label>
+          <label class="aim-label">Server<select class="aim-field"><option>matrix.org</option><option selected>Custom…</option></select></label>
+          <label class="aim-label">Homeserver<input class="aim-field" value="example.com" /></label>
           <label class="aim-label">Screen Name<input class="aim-field" value="alice" /></label>
           <label class="aim-label">Password<input class="aim-field" type="password" value="aimtrix-test" /></label>
         </div>

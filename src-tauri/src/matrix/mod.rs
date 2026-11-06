@@ -1,5 +1,6 @@
 //! The single Matrix session owned by the Rust core: sign on, resume, sign off.
 
+pub mod auto_reply;
 pub mod crypto;
 mod html;
 mod keyring;
@@ -64,6 +65,8 @@ pub struct Signed {
     pub recovery: tauri::async_runtime::JoinHandle<()>,
     pub trust: tauri::async_runtime::JoinHandle<()>,
     pub verification_requests: matrix_sdk::event_handler::EventHandlerHandle,
+    /// Answers IMs while away, if switched on.
+    pub auto_reply: auto_reply::Watching,
 }
 
 fn store_dir(data_dir: &Path) -> PathBuf {
@@ -1718,7 +1721,8 @@ mod tests {
 
     /// Wait until `sender` knows `receiver`'s device, so a message it
     /// encrypts now includes the key for it. A brand-new device reaches
-    /// other users' device lists through sync, which can lag under load.
+    /// other users' device lists through sync, which can lag under load,
+    /// so this also asks the server for them directly.
     async fn knows_device(sender: &Client, receiver: &Client) {
         let (user, device) = (receiver.user_id().unwrap(), receiver.device_id().unwrap());
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -1729,6 +1733,8 @@ mod tests {
             .unwrap()
             .is_none()
         {
+            // A `/keys/query` for them; errors just mean try again.
+            let _ = sender.encryption().request_user_identity(user).await;
             assert!(
                 tokio::time::Instant::now() < deadline,
                 "timed out waiting for {} to know {user}'s new device",
@@ -2263,25 +2269,24 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs the dev homeserver"]
     async fn presence_splits_buddies_into_online_and_offline() {
-        use matrix_sdk::ruma::{api::client::room::create_room::v3::Request, user_id};
+        use matrix_sdk::ruma::api::client::room::create_room::v3::Request;
         use rooms::Section;
         use std::time::Duration;
 
-        // A fresh buddy, since other tests keep the seeded users online.
+        // Fresh users on both sides: other tests keep the seeded users
+        // online, and their presence updates use up the server's limit of
+        // one per user every 10 s, delaying the watcher's check.
         let user = register_throwaway_user("presence").await;
         let buddy_dir = tempfile::tempdir().unwrap();
-        let buddy = login(buddy_dir.path(), PASS, HS, &user, "aimtrix-test")
-            .await
-            .unwrap();
+        let buddy = throwaway_login(buddy_dir.path(), &user).await;
+        let watcher_name = register_throwaway_user("watcher").await;
+        let dir = tempfile::tempdir().unwrap();
+        let alice = throwaway_login(dir.path(), &watcher_name).await;
         let mut request = Request::new();
         request.is_direct = true;
-        request.invite = vec![user_id!("@alice:localhost").to_owned()];
+        request.invite = vec![alice.user_id().unwrap().to_owned()];
         let room = buddy.create_room(request).await.unwrap();
 
-        let dir = tempfile::tempdir().unwrap();
-        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
-            .await
-            .unwrap();
         alice.join_room_by_id(room.room_id()).await.unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -2349,20 +2354,8 @@ mod tests {
 
         watcher.abort();
         syncing.stop().await;
-        if let Some(dm) = alice.get_room(room.room_id()) {
-            dm.leave().await.unwrap();
-        }
-        alice.logout().await.unwrap();
-        use matrix_sdk::ruma::api::client::uiaa::{AuthData, MatrixUserIdentifier, Password};
-        let password = Password::new(
-            MatrixUserIdentifier::new(user.clone()).into(),
-            "aimtrix-test".to_owned(),
-        );
-        buddy
-            .account()
-            .deactivate(None, Some(AuthData::Password(password)), true)
-            .await
-            .unwrap();
+        deactivate(&alice).await;
+        deactivate(&buddy).await;
     }
 
     #[tokio::test]
@@ -2463,8 +2456,17 @@ mod tests {
             let room = alice
                 .get_room(&matrix_sdk::ruma::RoomId::parse(&added.room_id).unwrap())
                 .unwrap();
-            assert!(room.latest_encryption_state().await.unwrap().is_encrypted());
-            // `m.direct` arrives with a later sync than the room itself.
+            // The encryption state and `m.direct` can arrive with a later
+            // sync than the room itself.
+            let mut encrypted = false;
+            for _ in 0..100 {
+                encrypted = room.latest_encryption_state().await.unwrap().is_encrypted();
+                if encrypted {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            assert!(encrypted, "the new DM isn't encrypted");
             let mut direct = false;
             for _ in 0..100 {
                 direct = room.is_direct().await.unwrap();
@@ -2741,5 +2743,115 @@ mod tests {
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn auto_reply_answers_once_per_time_away() {
+        use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
+        use std::time::Duration;
+
+        // Throwaway users, so being away doesn't affect other tests.
+        let away_name = register_throwaway_user("away").await;
+        let buddy_name = register_throwaway_user("buddy").await;
+        let away_dir = tempfile::tempdir().unwrap();
+        let away = throwaway_login(away_dir.path(), &away_name).await;
+        let buddy_dir = tempfile::tempdir().unwrap();
+        let buddy = throwaway_login(buddy_dir.path(), &buddy_name).await;
+
+        let away_sync = sync::start(&away, |_| {}).await.unwrap();
+        let tracker = presence::Tracker::new(away.clone(), Duration::from_secs(1));
+        let handler = auto_reply::watch(&away, tracker.clone(), || true);
+        let buddy_sync = sync::start(&buddy, |_| {}).await.unwrap();
+
+        let checks = std::panic::AssertUnwindSafe(async {
+            assert!(wait_for_support(&tracker).await);
+            // An encrypted DM, as Add Buddy makes them.
+            let added = rooms::add_buddy(&buddy, &away_name).await.unwrap();
+            let room_id = matrix_sdk::ruma::RoomId::parse(&added.room_id).unwrap();
+            away.join_room_by_id(&room_id).await.unwrap();
+            let (mut lines, _watching, mut diffs) = watch_lines(&buddy, &added.room_id).await;
+            // The away side finds the buddy's device itself before encrypting
+            // its reply (sending loads the room's members).
+            knows_device(&buddy, &away).await;
+            let room = buddy.get_room(&room_id).unwrap();
+            assert!(room.latest_encryption_state().await.unwrap().is_encrypted());
+            let send = |body: &'static str| {
+                let room = room.clone();
+                async move {
+                    room.send(RoomMessageEventContent::text_plain(body))
+                        .await
+                        .unwrap();
+                }
+            };
+            let replies = |l: &[timeline::Line], text: &str| {
+                l.iter()
+                    .filter(|line| {
+                        matches!(line, timeline::Line::Message { body, own: false, .. }
+                            if body == &format!("{}{text}", auto_reply::PREFIX))
+                    })
+                    .count()
+            };
+
+            // Before going away: no reply.
+            send("are you there?").await;
+            wait_for_lines(&mut lines, &mut diffs, "the first message", |l| {
+                said_anything(l, "are you there?")
+            })
+            .await;
+
+            tracker.set_away(Some("Out to lunch")).await.unwrap();
+            send("hello?").await;
+            send("hello??").await;
+            wait_for_lines(&mut lines, &mut diffs, "an auto-reply", |l| {
+                replies(l, "Out to lunch") >= 1
+            })
+            .await;
+            // Give a second reply time to show up, if there were one.
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            while let Ok(diff) = diffs.try_recv() {
+                apply(&mut lines, diff);
+            }
+            assert_eq!(
+                replies(&lines, "Out to lunch"),
+                1,
+                "one reply per time away"
+            );
+            // To "hello?", not to the message from before going away.
+            let position = |pred: &dyn Fn(&str) -> bool| {
+                lines
+                    .iter()
+                    .position(|l| matches!(l, timeline::Line::Message { body, .. } if pred(body)))
+            };
+            let reply = position(&|b| b.starts_with(auto_reply::PREFIX)).unwrap();
+            let hello = position(&|b| b == "hello?").unwrap();
+            assert!(reply > hello, "replied before going away");
+
+            // Back, then away again: the next message gets a new reply.
+            tracker.set_away(None).await.unwrap();
+            tracker.set_away(Some("Back soon")).await.unwrap();
+            send("now?").await;
+            wait_for_lines(&mut lines, &mut diffs, "the second auto-reply", |l| {
+                replies(l, "Back soon") == 1
+            })
+            .await;
+        });
+        let result = futures_util::FutureExt::catch_unwind(checks).await;
+
+        handler.stop(&away);
+        drop(tracker);
+        away_sync.stop().await;
+        buddy_sync.stop().await;
+        deactivate(&away).await;
+        deactivate(&buddy).await;
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    fn said_anything(lines: &[timeline::Line], text: &str) -> bool {
+        lines
+            .iter()
+            .any(|line| matches!(line, timeline::Line::Message { body, .. } if body == text))
     }
 }

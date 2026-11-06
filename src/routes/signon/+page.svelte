@@ -3,8 +3,35 @@
   import { page } from "$app/state";
   import { tick } from "svelte";
 
-  // The dev homeserver from dev/docker-compose.yml, so testing is one less field.
-  let homeserver = $state(import.meta.env.DEV ? "http://localhost:8008" : "");
+  /** The servers offered, as [address, label]. Dev builds add the local test servers. */
+  const SERVERS: [string, string][] = [
+    ["matrix.org", "matrix.org"],
+    ...(import.meta.env.DEV
+      ? ([
+          ["http://localhost:8008", "Dev server (localhost:8008)"],
+          ["http://localhost:8009", "Dev, no presence (localhost:8009)"],
+        ] as [string, string][])
+      : []),
+  ];
+  const CUSTOM = "custom";
+  /** Where the last server you signed on to is remembered. Not secret. */
+  const REMEMBER = "aimtrix.signon.server";
+
+  /** The last server you used, if this computer remembers one. */
+  function remembered(): string | null {
+    try {
+      return localStorage.getItem(REMEMBER);
+    } catch {
+      return null;
+    }
+  }
+
+  const last = remembered();
+  const known = SERVERS.some(([address]) => address === last);
+  /** A server from the list, or `CUSTOM`. */
+  let server = $state(last === null ? SERVERS[0][0] : known ? last : CUSTOM);
+  let custom = $state(last !== null && !known ? last : "");
+  const homeserver = $derived(server === CUSTOM ? custom.trim() : server);
   let username = $state("");
   let password = $state("");
   let busy = $state(false);
@@ -19,6 +46,12 @@
     busy = true;
     error = "";
     try {
+      // Remembered first: on success Rust closes this window.
+      try {
+        localStorage.setItem(REMEMBER, homeserver);
+      } catch {
+        // Only a convenience; signing on works without it.
+      }
       // On success Rust opens the Buddy List and closes this window.
       await invoke("login", { homeserver, username, password });
     } catch (e) {
@@ -36,9 +69,29 @@
     <legend>Matrix account</legend>
     <div class="fields">
       <label class="aim-label">
-        Homeserver
-        <input class="aim-field" bind:value={homeserver} placeholder="matrix.org" required />
+        Server
+        <select class="aim-field" bind:value={server}>
+          {#each SERVERS as [address, label] (address)}
+            <option value={address}>{label}</option>
+          {/each}
+          <option value={CUSTOM}>Custom…</option>
+        </select>
       </label>
+      {#if server === CUSTOM}
+        <label class="aim-label">
+          Homeserver
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="aim-field"
+            bind:value={custom}
+            placeholder="example.com or https://…"
+            autocomplete="url"
+            spellcheck="false"
+            autofocus={custom === ""}
+            required
+          />
+        </label>
+      {/if}
       <label class="aim-label">
         Screen Name
         <!-- svelte-ignore a11y_autofocus -->

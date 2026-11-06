@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
     matrix::{
-        self, Session, Signed,
+        self, Session, Signed, auto_reply,
         crypto::{self, Recovery},
         members::{self, ChatRoom},
         presence::{self, Own, Tracker},
@@ -26,7 +26,7 @@ use crate::{
         upload,
         verify::{self, Flow, Step, Trust},
     },
-    windows,
+    preferences, windows,
 };
 
 /// Event carrying the new [`Status`] to every window.
@@ -84,6 +84,10 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
             start_verification(&app, flow);
         }
     });
+    let auto_reply = auto_reply::watch(&client, presence.clone(), {
+        let app = app.clone();
+        move || app.state::<preferences::Store>().get().auto_reply
+    });
     *app.state::<Session>().signed.lock().await = Some(Signed {
         client,
         sync,
@@ -93,6 +97,7 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
         recovery,
         trust,
         verification_requests,
+        auto_reply,
     });
     Ok(())
 }
@@ -107,6 +112,7 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
     signed
         .client
         .remove_event_handler(signed.verification_requests);
+    signed.auto_reply.stop(&signed.client);
     signed.sync.stop().await;
     let state = app.state::<Session>();
     *state.recovery.lock().unwrap() = Recovery::Unknown;
