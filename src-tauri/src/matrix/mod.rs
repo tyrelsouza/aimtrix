@@ -4,8 +4,10 @@ mod keyring;
 mod media;
 pub mod rooms;
 pub mod sync;
+pub mod timeline;
 
 use std::{
+    collections::HashMap,
     io,
     path::{Path, PathBuf},
 };
@@ -25,6 +27,8 @@ pub struct Session {
     pub status: std::sync::Mutex<sync::Status>,
     /// The latest Buddy List, for windows that open after it changed.
     pub buddies: std::sync::Mutex<Vec<rooms::Buddy>>,
+    /// The conversation each open room window follows, by room ID.
+    pub timelines: std::sync::Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
 }
 
 pub struct Signed {
@@ -588,6 +592,118 @@ mod tests {
             room.leave().await.unwrap();
         }
         bob.logout().await.unwrap();
+        watcher.abort();
+        syncing.stop().await;
+        alice.logout().await.unwrap();
+    }
+
+    /// Apply a timeline diff the way the IM window does.
+    fn apply(lines: &mut Vec<timeline::Line>, diff: timeline::Diff) {
+        use timeline::Diff::*;
+        match diff {
+            Append { values } => lines.extend(values),
+            Clear => lines.clear(),
+            PushFront { value } => lines.insert(0, value),
+            PushBack { value } => lines.push(value),
+            PopFront => {
+                lines.remove(0);
+            }
+            PopBack => {
+                lines.pop();
+            }
+            Insert { index, value } => lines.insert(index, value),
+            Set { index, value } => lines[index] = value,
+            Remove { index } => {
+                lines.remove(index);
+            }
+            Truncate { length } => lines.truncate(length),
+            Reset { values } => *lines = values,
+        }
+    }
+
+    /// Apply diffs from `rx` until `want` holds; panic after 20 s.
+    async fn wait_for_lines(
+        lines: &mut Vec<timeline::Line>,
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<timeline::Diff>,
+        what: &str,
+        want: impl Fn(&[timeline::Line]) -> bool,
+    ) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !want(lines) {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(diff)) => apply(lines, diff),
+                _ => panic!("timed out waiting for {what}; lines: {lines:#?}"),
+            }
+        }
+    }
+
+    fn said(lines: &[timeline::Line], who: &str, text: &str, mine: bool) -> bool {
+        lines.iter().any(|line| {
+            matches!(line, timeline::Line::Message { name, body, own, .. }
+                if name == who && body == text && *own == mine)
+        })
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn timeline_shows_history_and_new_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+            .await
+            .unwrap();
+        let syncing = sync::start(&alice, |_| {}).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let watcher = rooms::watch(syncing.room_list_service(), move |b| {
+            let _ = tx.send(b);
+        });
+        let room_id = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        wait_for_buddies(&mut rx, "Bob's DM", {
+            let room_id = room_id.clone();
+            move |b| match find(b, "Bob Brown") {
+                Some((_, bob)) => {
+                    *room_id.lock().unwrap() = bob.room_id.clone();
+                    true
+                }
+                None => false,
+            }
+        })
+        .await;
+        let room_id = room_id.lock().unwrap().clone();
+
+        let (tx, mut diffs) = tokio::sync::mpsc::unbounded_channel();
+        let (mut lines, task) = timeline::watch(&alice, &room_id, move |d| {
+            let _ = tx.send(d);
+        })
+        .await
+        .unwrap();
+        // Earlier tests in this room leave at least one message from each.
+        wait_for_lines(&mut lines, &mut diffs, "history from both", |l| {
+            let from = |me: bool| {
+                l.iter()
+                    .any(|line| matches!(line, timeline::Line::Message { own, .. } if *own == me))
+            };
+            from(true) && from(false)
+        })
+        .await;
+        assert!(
+            lines.iter().any(|line| matches!(line,
+                timeline::Line::Message { name, own: false, .. } if name == "Bob Brown")),
+            "Bob's messages carry his display name"
+        );
+
+        let body = format!("timeline test {}", rand::random::<u32>());
+        send_as("bob", &room_id, &body).await;
+        wait_for_lines(&mut lines, &mut diffs, "Bob's new message", |l| {
+            said(l, "Bob Brown", &body, false)
+        })
+        .await;
+        assert!(
+            matches!(lines.iter().rev().find(|l| matches!(l, timeline::Line::Message { .. })),
+                Some(timeline::Line::Message { body: b, .. }) if *b == body),
+            "the new message is the last one"
+        );
+
+        task.abort();
         watcher.abort();
         syncing.stop().await;
         alice.logout().await.unwrap();

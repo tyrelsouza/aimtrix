@@ -15,7 +15,7 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 - **Styling:** reuse the `aim-` classes and CSS tokens in `src/styles/aim-chrome.css` (loaded globally from `src/routes/+layout.svelte`) instead of one-off styles. `/demo` (dev-only link on the main page) shows every piece; add new pieces there too.
 
 ## Architecture rules
-- One Matrix session, owned by the Rust core. Windows talk to it only through `#[tauri::command]`s (`src-tauri/src/commands.rs`) and Tauri events (`sync:status`, `buddylist:update`, `room:<id>:timeline_diff`, `room:<id>:typing`, `presence:update`, `verification:*`).
+- One Matrix session, owned by the Rust core. Windows talk to it only through `#[tauri::command]`s (`src-tauri/src/commands.rs`) and Tauri events (`sync:status`, `buddylist:update`, `room:<id>:timeline_diff`, `room:<id>:typing`, `presence:update`, `verification:*`). In event names `<id>` is the room's key (`windows::room_key`, the hash in its window label), since room IDs have characters event names can't.
 - Windows are created in code (`src-tauri/src/windows.rs`), not in `tauri.conf.json`. On launch `startup()` in `src-tauri/src/lib.rs` resumes the saved session into the Buddy List or opens Sign On.
 - The Buddy List is the main window. Each IM or Chat Room gets its own `WebviewWindow`, labeled `room-<roomId-hash>`. Opening a room that already has a window focuses that window.
 - DM vs. group: a room is a DM if it is in `m.direct` OR has ≤2 joined+invited members. The `aimtrix.chat` room tag overrides this and forces a Chat Room. Keep this logic in `src-tauri/src/matrix/rooms.rs`, with unit tests.

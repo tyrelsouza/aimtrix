@@ -10,6 +10,7 @@ use crate::{
         self, Session, Signed,
         rooms::{self, Buddy},
         sync::{self, Status},
+        timeline::{self, Line},
     },
     windows,
 };
@@ -44,7 +45,60 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
     signed.buddy_list.abort();
     signed.sync.stop().await;
     app.state::<Session>().buddies.lock().unwrap().clear();
+    for (_, task) in app.state::<Session>().timelines.lock().unwrap().drain() {
+        task.abort();
+    }
+    for (label, window) in app.webview_windows() {
+        if label.starts_with(windows::ROOM_LABEL_PREFIX) {
+            let _ = window.close();
+        }
+    }
     Some(signed.client)
+}
+
+/// Follow a room's conversation for its window, replacing any earlier
+/// watch (e.g. after a reload). Returns the current lines; changes go to
+/// the window as `room:<key>:timeline_diff` events.
+pub async fn watch_timeline(
+    app: &AppHandle,
+    client: &Client,
+    room_id: &str,
+) -> Result<Vec<Line>, String> {
+    let key = windows::room_key(room_id);
+    let event = format!("room:{key}:timeline_diff");
+    let label = format!("{}{key}", windows::ROOM_LABEL_PREFIX);
+    let (lines, task) = timeline::watch(client, room_id, {
+        let app = app.clone();
+        move |diff| {
+            if let Err(e) = app.emit_to(&label, &event, &diff) {
+                eprintln!("Couldn't send a timeline change to its window: {e}");
+            }
+        }
+    })
+    .await?;
+    let old = app
+        .state::<Session>()
+        .timelines
+        .lock()
+        .unwrap()
+        .insert(room_id.to_owned(), task);
+    if let Some(old) = old {
+        old.abort();
+    }
+    Ok(lines)
+}
+
+/// Stop following a room's conversation, once its window is gone.
+pub fn unwatch_timeline(app: &AppHandle, room_id: &str) {
+    if let Some(task) = app
+        .state::<Session>()
+        .timelines
+        .lock()
+        .unwrap()
+        .remove(room_id)
+    {
+        task.abort();
+    }
 }
 
 fn on_status(app: &AppHandle, status: Status) {

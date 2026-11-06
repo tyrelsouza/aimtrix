@@ -8,6 +8,7 @@ use crate::{
         self, Session,
         rooms::{self, Buddy, Section},
         sync::Status,
+        timeline::Line,
     },
     session, windows,
 };
@@ -102,6 +103,18 @@ pub fn open_room(
         }
     };
     windows::open_room(&app, &room_id, &name).map_err(|e| e.to_string())
+}
+
+/// The lines of a room's conversation, for its IM window. Changes arrive as
+/// `room:<key>:timeline_diff` events, where `<key>` is the end of the
+/// window's `room-<key>` label.
+#[tauri::command]
+pub async fn room_timeline(
+    app: AppHandle,
+    session: State<'_, Session>,
+    room_id: String,
+) -> Result<Vec<Line>, String> {
+    session::watch_timeline(&app, &client(&session).await?, &room_id).await
 }
 
 /// The signed-on client. Cloned so the session isn't locked while it's used.

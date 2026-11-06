@@ -1,7 +1,9 @@
 //! Opening the app's windows. Each is focused instead of duplicated if it's
 //! already open.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+
+use crate::session;
 
 /// The Buddy List is the `main` window.
 pub fn open_buddy_list(app: &AppHandle) -> tauri::Result<()> {
@@ -45,17 +47,32 @@ pub fn open_room(app: &AppHandle, room_id: &str, name: &str) -> tauri::Result<()
         return window.set_focus();
     }
     let url = format!("/im?room={}", encode_query(room_id));
-    WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
         .title(name)
         .inner_size(420.0, 360.0)
         .min_inner_size(280.0, 220.0)
         .build()?;
+    let (app, room_id) = (app.clone(), room_id.to_owned());
+    window.on_window_event(move |event| {
+        if let WindowEvent::Destroyed = event {
+            session::unwatch_timeline(&app, &room_id);
+        }
+    });
     Ok(())
 }
 
-/// `room-<hash>`. Room IDs have characters window labels can't, like `!`.
+/// Prefix of every room window's label.
+pub const ROOM_LABEL_PREFIX: &str = "room-";
+
+/// `room-<key>`, the label of a room's window.
 fn room_label(room_id: &str) -> String {
-    format!("room-{:016x}", fnv1a(room_id.as_bytes()))
+    format!("{ROOM_LABEL_PREFIX}{}", room_key(room_id))
+}
+
+/// Stands in for the room ID in window labels and event names, which can't
+/// have characters like `!`.
+pub fn room_key(room_id: &str) -> String {
+    format!("{:016x}", fnv1a(room_id.as_bytes()))
 }
 
 /// FNV-1a: stable across runs and Rust versions, unlike `DefaultHasher`.
@@ -87,7 +104,8 @@ mod tests {
         let label = room_label("!abc:localhost");
         assert_eq!(label, room_label("!abc:localhost"));
         assert_ne!(label, room_label("!abd:localhost"));
-        assert_eq!(label.len(), "room-".len() + 16);
+        assert_eq!(label, format!("room-{}", room_key("!abc:localhost")));
+        assert_eq!(room_key("!abc:localhost").len(), 16);
         // Tauri allows alphanumerics, `-`, `/`, `:` and `_` in labels.
         assert!(label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
     }
