@@ -25,15 +25,15 @@ use matrix_sdk::{
 };
 use matrix_sdk_crypto::types::events::UtdCause;
 use matrix_sdk_ui::timeline::{
-    AnyOtherStateEventContentChange, EncryptedMessage, EventSendState, MembershipChange,
-    MsgLikeKind, Profile, RoomExt, Timeline, TimelineDetails, TimelineItem, TimelineItemContent,
-    VirtualTimelineItem,
+    AnyOtherStateEventContentChange, AttachmentSource, EncryptedMessage, EventSendState,
+    MembershipChange, MsgLikeKind, Profile, RoomExt, Timeline, TimelineDetails, TimelineItem,
+    TimelineItemContent, VirtualTimelineItem,
 };
 use serde::Serialize;
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{collections::HashSet, future::IntoFuture, path::PathBuf, sync::Arc};
 use tauri::async_runtime::{JoinHandle, spawn, spawn_blocking};
 
-use super::{html, media};
+use super::{html, media, upload};
 use tokio::sync::broadcast::error::RecvError;
 
 /// History to load when the window opens, and each time you scroll up.
@@ -460,6 +460,46 @@ impl Watching {
             .typing_notice(typing)
             .await
             .map_err(|e| format!("Couldn't send the typing notice: {e}"))
+    }
+
+    /// The biggest file the server takes, in bytes, if it says.
+    pub async fn max_upload_size(&self) -> Option<u64> {
+        self.timeline
+            .room()
+            .client()
+            .load_or_fetch_max_upload_size()
+            .await
+            .ok()
+            .map(u64::from)
+    }
+
+    /// Upload a file and send it, encrypted first if the room is. `progress`
+    /// gets (bytes sent, total) as the upload goes. There's no local echo:
+    /// the message shows up once the server has it.
+    pub async fn send_file(
+        &self,
+        file: upload::Prepared,
+        progress: impl Fn(usize, usize),
+    ) -> Result<(), String> {
+        let name = file.name.clone();
+        let send = self.timeline.send_attachment(
+            AttachmentSource::Data {
+                bytes: file.bytes,
+                filename: file.name,
+            },
+            file.mime,
+            file.config,
+        );
+        let mut updates = send.subscribe_to_send_progress();
+        let mut send = std::pin::pin!(send.into_future());
+        loop {
+            tokio::select! {
+                result = &mut send => {
+                    return result.map_err(|e| format!("Couldn't send {name}: {e}"));
+                }
+                Some(update) = updates.next() => progress(update.current, update.total),
+            }
+        }
     }
 
     /// Send a message: plain text, plus formatted text that's cleaned first.

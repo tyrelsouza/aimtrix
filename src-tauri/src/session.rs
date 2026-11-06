@@ -11,6 +11,7 @@ use matrix_sdk::{
     Client,
     ruma::{OwnedRoomId, RoomId},
 };
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
@@ -22,6 +23,7 @@ use crate::{
         rooms::{self, Buddy},
         sync::{self, Status},
         timeline::{self, Line},
+        upload,
         verify::{self, Flow, Step, Trust},
     },
     windows,
@@ -112,6 +114,9 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
     *state.verification.lock().unwrap() = None;
     *state.verification_step.lock().unwrap() = None;
     app.state::<Session>().buddies.lock().unwrap().clear();
+    for (_, upload) in app.state::<Session>().uploads.lock().unwrap().drain() {
+        upload.abort();
+    }
     // Dropping each watch stops it.
     app.state::<Session>().timelines.lock().unwrap().clear();
     app.state::<Session>().members.lock().unwrap().clear();
@@ -218,6 +223,15 @@ pub async fn watch_chat_room(
 /// Stop following a room's conversation and members, once its window is
 /// gone.
 pub fn unwatch_timeline(app: &AppHandle, room_id: &str) {
+    if let Some(upload) = app
+        .state::<Session>()
+        .uploads
+        .lock()
+        .unwrap()
+        .remove(room_id)
+    {
+        upload.abort();
+    }
     app.state::<Session>()
         .timelines
         .lock()
@@ -308,6 +322,148 @@ pub async fn load_older(app: &AppHandle, room_id: &str) -> Result<bool, String> 
 
 /// The watch of an open room window's conversation. Cloned out so the map
 /// isn't locked while it's used.
+/// How sending files from a room window is going, for its status bar.
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum Upload {
+    /// Sending file `index` (from 1) of `count`; `sent` of `total` bytes are
+    /// up.
+    #[serde(rename_all = "camelCase")]
+    Sending {
+        name: String,
+        index: usize,
+        count: usize,
+        sent: usize,
+        total: usize,
+    },
+    Done,
+    Failed {
+        message: String,
+    },
+    Cancelled,
+}
+
+/// Send files from a room's window, one after another, telling the window
+/// how it goes as `room:<key>:upload` events. Checks them all against the
+/// server's size limit first, so nothing is sent if one is too big.
+pub async fn send_files(
+    app: &AppHandle,
+    room_id: &str,
+    sources: Vec<upload::Source>,
+) -> Result<(), String> {
+    let watching = watching(app, room_id)?;
+    if sources.is_empty() {
+        return Ok(());
+    }
+    if busy_uploading(app, room_id) {
+        return Err("Wait for the file being sent to finish, or cancel it.".to_owned());
+    }
+    // A server that doesn't say has no limit we can check.
+    let max = watching.max_upload_size().await;
+    for source in &sources {
+        let (name, size) = (source.name()?, source.size()?);
+        if let Some(max) = max
+            && size > max
+        {
+            return Err(format!(
+                "{name} is too big to send ({}). This server takes files up to {}.",
+                upload::describe_size(size),
+                upload::describe_size(max)
+            ));
+        }
+    }
+
+    let key = windows::room_key(room_id);
+    let label = format!("{}{key}", windows::ROOM_LABEL_PREFIX);
+    let event = format!("room:{key}:upload");
+    let emit = {
+        let app = app.clone();
+        move |upload: Upload| {
+            if let Err(e) = app.emit_to(&label, &event, &upload) {
+                eprintln!("Couldn't send upload progress to its window: {e}");
+            }
+        }
+    };
+    let state = app.state::<Session>();
+    let mut uploads = state.uploads.lock().unwrap();
+    // Checked again here, in case another send started meanwhile.
+    if uploads
+        .get(room_id)
+        .is_some_and(|task| !task.inner().is_finished())
+    {
+        return Err("Wait for the file being sent to finish, or cancel it.".to_owned());
+    }
+    let count = sources.len();
+    let task = tauri::async_runtime::spawn(async move {
+        for (i, source) in sources.into_iter().enumerate() {
+            let name = source.name().unwrap_or_default();
+            let sending = |sent, total| Upload::Sending {
+                name: name.clone(),
+                index: i + 1,
+                count,
+                sent,
+                total,
+            };
+            emit(sending(0, 0));
+            let prepared =
+                match tauri::async_runtime::spawn_blocking(move || upload::prepare(source)).await {
+                    Ok(Ok(prepared)) => prepared,
+                    Ok(Err(message)) => return emit(Upload::Failed { message }),
+                    Err(e) => {
+                        return emit(Upload::Failed {
+                            message: e.to_string(),
+                        });
+                    }
+                };
+            // Every whole percent is plenty for a status bar.
+            let last = std::sync::atomic::AtomicUsize::new(usize::MAX);
+            let result = watching
+                .send_file(prepared, |sent, total| {
+                    let percent = sent * 100 / total.max(1);
+                    if last.swap(percent, Ordering::Relaxed) != percent {
+                        emit(sending(sent, total));
+                    }
+                })
+                .await;
+            if let Err(message) = result {
+                return emit(Upload::Failed { message });
+            }
+        }
+        emit(Upload::Done);
+    });
+    uploads.insert(room_id.to_owned(), task);
+    Ok(())
+}
+
+fn busy_uploading(app: &AppHandle, room_id: &str) -> bool {
+    app.state::<Session>()
+        .uploads
+        .lock()
+        .unwrap()
+        .get(room_id)
+        .is_some_and(|task| !task.inner().is_finished())
+}
+
+/// Stop sending files from a room's window. A file already uploaded may
+/// still arrive.
+pub fn cancel_upload(app: &AppHandle, room_id: &str) {
+    let Some(task) = app
+        .state::<Session>()
+        .uploads
+        .lock()
+        .unwrap()
+        .remove(room_id)
+    else {
+        return;
+    };
+    if !task.inner().is_finished() {
+        task.abort();
+        let key = windows::room_key(room_id);
+        let label = format!("{}{key}", windows::ROOM_LABEL_PREFIX);
+        let _ = app.emit_to(&label, &format!("room:{key}:upload"), Upload::Cancelled);
+    }
+}
+
 fn watching(app: &AppHandle, room_id: &str) -> Result<Arc<timeline::Watching>, String> {
     app.state::<Session>()
         .timelines

@@ -612,6 +612,12 @@ button.aim-list__item:focus-visible {
   -webkit-user-select: text;
 }
 
+/* A window that files are being dragged over, to send them. */
+.aim-drop-target {
+  outline: 2px dashed var(--c-select);
+  outline-offset: -3px;
+}
+
 /* ---------- Status bar ---------- */
 
 .aim-statusbar {

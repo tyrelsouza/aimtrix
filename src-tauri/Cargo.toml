@@ -30,6 +30,10 @@ tokio = { version = "1.54.1", features = ["macros", "sync", "time"] }
 ammonia = "4.2.4"
 tauri-plugin-dialog = "2"
 matrix-sdk-crypto = { version = "0.19", default-features = false }
+mime = "0.3"
+mime_guess = "2"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+arboard = { version = "3.7.0", default-features = false, features = ["image-data", "wayland-data-control"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
@@ -42,18 +46,27 @@ strip = true
 
 # Recovery passphrases go through 500,000 rounds of PBKDF2-SHA-512, which
 # takes ~10 s per try unoptimized. Optimizing the hash crates makes dev
-# builds and tests usable.
+# builds and tests usable. (`cargo remove` deletes entries for crates that
+# aren't direct dependencies; put them back if it does.)
 [profile.dev.package.sha2]
 opt-level = 3
 [profile.dev.package.hmac]
 opt-level = 3
 [profile.dev.package.pbkdf2]
 opt-level = 3
+# Same for making thumbnails of photos being sent.
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.image-webp]
+opt-level = 3
 
 [dev-dependencies]
 hex = "0.4"
 hmac = "0.12"
-mime = "0.3"
 sha1 = "0.10"
 tempfile = "3.27.0"
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }

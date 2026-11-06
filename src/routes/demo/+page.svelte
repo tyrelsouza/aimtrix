@@ -295,11 +295,13 @@
       <div class="row end">
         <button class="aim-btn">Warn</button>
         <button class="aim-btn">Block</button>
+        <button class="aim-btn">Send File…</button>
         <button class="aim-btn is-default">Send</button>
       </div>
     </div>
     <div class="aim-statusbar">
-      <span class="aim-statusbar__section">Bob Brown is typing…</span>
+      <span class="aim-statusbar__section">Sending beach.jpg (2 of 3)… 45%</span>
+      <span class="aim-statusbar__section aim-statusbar__section--fit"><button class="aim-btn aim-btn--small">Cancel</button></span>
     </div>
   </section>
 

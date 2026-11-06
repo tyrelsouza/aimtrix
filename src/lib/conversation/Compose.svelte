@@ -6,14 +6,18 @@
   import { invoke } from "@tauri-apps/api/core";
   import type { Snippet } from "svelte";
   import { COLORS, serialize } from "$lib/compose";
+  import { pasteClipboardPicture, pastedPictures, sendFiles, sendPasted } from "./upload";
 
   let {
     roomId,
     error = $bindable(""),
+    uploading = false,
     beside,
   }: {
     roomId: string;
     error?: string;
+    /** Files are being sent from this window. */
+    uploading?: boolean;
     /** Shown to the right of the message box, e.g. your Buddy Icon. */
     beside?: Snippet;
   } = $props();
@@ -90,10 +94,28 @@
     typed();
   }
 
-  /** Paste as plain text, so outside styles don't come along. */
+  /**
+   * Paste a picture to send it (Rust asks first), and text as plain text,
+   * so outside styles don't come along.
+   */
   function paste(e: ClipboardEvent) {
     e.preventDefault();
-    document.execCommand("insertText", false, e.clipboardData?.getData("text/plain") ?? "");
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (text) {
+      document.execCommand("insertText", false, text);
+      return;
+    }
+    if (uploading) {
+      error = "Wait for the file being sent to finish, or cancel it.";
+      return;
+    }
+    error = "";
+    // A paste holds one picture in practice; a window sends one at a time.
+    // WebKitGTK doesn't hand pasted pictures over, so Rust reads the
+    // clipboard itself (and does nothing if there's no picture).
+    const pictures = pastedPictures(e);
+    const sending = pictures.length > 0 ? sendPasted(roomId, pictures[0]) : pasteClipboardPicture(roomId);
+    sending.catch((err) => (error = String(err)));
   }
 
   /** Keep the toolbar showing the formatting at the cursor. */
@@ -117,6 +139,15 @@
     editor.focus();
     document.execCommand("foreColor", false, hex);
     edited();
+  }
+
+  async function pickFiles() {
+    error = "";
+    try {
+      await sendFiles(roomId);
+    } catch (err) {
+      error = String(err);
+    }
   }
 
   async function send(e?: SubmitEvent) {
@@ -187,6 +218,8 @@
     {@render beside?.()}
   </div>
   <div class="buttons">
+    <button type="button" class="aim-btn" disabled={uploading} onclick={pickFiles}
+      title="Send a file or picture. You can also drop files on this window, or paste a picture.">Send File…</button>
     <button class="aim-btn is-default" disabled={!draft.trim()}>Send</button>
   </div>
 </form>
@@ -215,6 +248,6 @@
   }
   .buttons {
     display: flex;
-    justify-content: flex-end;
+    justify-content: space-between;
   }
 </style>

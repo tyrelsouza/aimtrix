@@ -1,5 +1,6 @@
 <!-- A Chat Room window for a room with several people. -->
 <script lang="ts">
+  import { invoke } from "@tauri-apps/api/core";
   import { page } from "$app/state";
   import { watchBuddyList } from "$lib/buddylist";
   import { watchTyping } from "$lib/timeline";
@@ -8,6 +9,7 @@
   import Transcript from "$lib/conversation/Transcript.svelte";
   import Compose from "$lib/conversation/Compose.svelte";
   import { statusText } from "$lib/conversation/status";
+  import { watchFileDrops, watchUpload, type Upload } from "$lib/conversation/upload";
 
   const roomId = page.url.searchParams.get("room") ?? "";
   let name = $state("");
@@ -17,6 +19,32 @@
   let loading = $state(false);
   let saving = $state<string | null>(null);
   let notice = $state("");
+  let upload = $state<Upload | null>(null);
+  /** Files are being dragged over the window. */
+  let dropping = $state(false);
+
+  $effect(() =>
+    watchUpload((u) => {
+      if (u.state === "sending") {
+        upload = u;
+        return;
+      }
+      upload = null;
+      if (u.state === "failed") error = u.message;
+      if (u.state === "cancelled") notice = "Stopped sending.";
+    }),
+  );
+  $effect(() =>
+    watchFileDrops(
+      roomId,
+      (h) => (dropping = h),
+      (e) => (error = e),
+    ),
+  );
+
+  function cancelUpload() {
+    invoke("cancel_upload", { roomId }).catch((e) => (error = String(e)));
+  }
   /** Names of who's typing, not counting you. */
   let typing = $state<string[]>([]);
   /** Null until loaded. */
@@ -46,7 +74,7 @@
 </script>
 
 <div class="layout">
-  <main class="aim-window__body">
+  <main class="aim-window__body" class:aim-drop-target={dropping}>
     {#if topic}
       <p class="topic" title={topic}><b>Topic:</b> {topic}</p>
     {/if}
@@ -67,12 +95,17 @@
     {#if error}
       <p class="aim-alert" role="alert">{error}</p>
     {/if}
-    <Compose {roomId} bind:error />
+    <Compose {roomId} uploading={upload !== null} bind:error />
   </main>
   <footer class="aim-statusbar">
     <span class="aim-statusbar__section" role="status">
-      {statusText({ loading, saving, notice, typing, name })}
+      {statusText({ loading, saving, upload, notice, typing, name })}
     </span>
+    {#if upload}
+      <span class="aim-statusbar__section aim-statusbar__section--fit">
+        <button class="aim-btn aim-btn--small" onclick={cancelUpload}>Cancel</button>
+      </span>
+    {/if}
   </footer>
 </div>
 

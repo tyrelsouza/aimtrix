@@ -1,8 +1,10 @@
 //! The `#[tauri::command]` surface the windows call.
 
+use std::path::PathBuf;
+
 use matrix_sdk::Client;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 use crate::{
     matrix::{
@@ -14,6 +16,7 @@ use crate::{
         rooms::{self, Buddy, Section},
         sync::Status,
         timeline::Line,
+        upload,
         verify::{Flow, Step, Trust},
     },
     session, windows,
@@ -248,6 +251,129 @@ pub async fn save_attachment(
         .unwrap_or(name);
     session::save_attachment(&app, &room_id, &event_id, path).await?;
     Ok(Some(saved_as))
+}
+
+/// Send files from a room's window: `paths` (dropped on the window), or
+/// ones picked in an Open dialog when `paths` is `None`. Returns `false` if
+/// you cancelled the dialog. Progress arrives as `room:<key>:upload` events.
+#[tauri::command]
+pub async fn send_files(
+    app: AppHandle,
+    window: WebviewWindow,
+    room_id: String,
+    paths: Option<Vec<String>>,
+) -> Result<bool, String> {
+    let paths = match paths {
+        Some(paths) => paths.into_iter().map(PathBuf::from).collect(),
+        None => {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            app.dialog()
+                .file()
+                .set_title("Send File")
+                .set_parent(&window)
+                .pick_files(move |paths| {
+                    let _ = tx.send(paths);
+                });
+            let Some(picked) = rx.await.map_err(|e| e.to_string())? else {
+                return Ok(false);
+            };
+            picked
+                .into_iter()
+                .map(|p| p.into_path().map_err(|e| e.to_string()))
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    };
+    let sources = paths.into_iter().map(upload::Source::File).collect();
+    session::send_files(&app, &room_id, sources).await?;
+    Ok(true)
+}
+
+/// Send a picture pasted into a room's window, after asking. The picture
+/// is the raw request body; headers give the room (`x-room-id`) and its
+/// type (`x-mime-type`). Returns `false` if you said no.
+#[tauri::command]
+pub async fn send_pasted(
+    app: AppHandle,
+    window: WebviewWindow,
+    request: tauri::ipc::Request<'_>,
+) -> Result<bool, String> {
+    let header = |name: &str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| format!("Missing {name}."))
+    };
+    let (room_id, mime) = (header("x-room-id")?, header("x-mime-type")?);
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Nothing was pasted.".to_owned());
+    };
+    confirm_and_send_picture(&app, &window, &room_id, &mime, bytes.clone()).await
+}
+
+/// Send the picture on the system clipboard from a room's window, after
+/// asking. For pastes the webview doesn't hand over. Returns `false` if
+/// there's no picture or you said no.
+#[tauri::command]
+pub async fn paste_picture(
+    app: AppHandle,
+    window: WebviewWindow,
+    room_id: String,
+) -> Result<bool, String> {
+    let picture = tauri::async_runtime::spawn_blocking(upload::clipboard_picture)
+        .await
+        .map_err(|e| e.to_string())??;
+    match picture {
+        Some(png) => confirm_and_send_picture(&app, &window, &room_id, "image/png", png).await,
+        None => Ok(false),
+    }
+}
+
+/// Ask whether to send a pasted picture, then send it.
+async fn confirm_and_send_picture(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    room_id: &str,
+    mime: &str,
+    bytes: Vec<u8>,
+) -> Result<bool, String> {
+    let room_name = app
+        .state::<Session>()
+        .buddies
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|b| b.room_id == room_id)
+        .map(|b| b.name.clone())
+        .unwrap_or_else(|| "this conversation".to_owned());
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .message(format!(
+            "Send the pasted picture ({}) to {room_name}?",
+            upload::describe_size(bytes.len() as u64)
+        ))
+        .title("Send Picture")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Send".to_owned(),
+            "Cancel".to_owned(),
+        ))
+        .parent(window)
+        .show(move |send| {
+            let _ = tx.send(send);
+        });
+    if !rx.await.map_err(|e| e.to_string())? {
+        return Ok(false);
+    }
+    let name = upload::pasted_name(mime);
+    session::send_files(app, room_id, vec![upload::Source::Pasted { name, bytes }]).await?;
+    Ok(true)
+}
+
+/// Stop sending files from a room's window.
+#[tauri::command]
+pub fn cancel_upload(app: AppHandle, room_id: String) {
+    session::cancel_upload(&app, &room_id);
 }
 
 /// The signed-on client. Cloned so the session isn't locked while it's used.

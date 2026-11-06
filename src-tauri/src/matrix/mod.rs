@@ -9,6 +9,7 @@ pub mod presence;
 pub mod rooms;
 pub mod sync;
 pub mod timeline;
+pub mod upload;
 pub mod verify;
 
 use std::{
@@ -37,6 +38,8 @@ pub struct Session {
     pub buddies: std::sync::Mutex<Vec<rooms::Buddy>>,
     /// The conversation each open room window follows, by room ID.
     pub timelines: std::sync::Mutex<HashMap<String, std::sync::Arc<timeline::Watching>>>,
+    /// The files being sent from each open room window, by room ID.
+    pub uploads: std::sync::Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
     /// Who's in each open Chat Room, by room ID.
     pub members: std::sync::Mutex<HashMap<String, members::Watching>>,
     /// Whether this device can read old messages, for windows that open
@@ -2516,6 +2519,127 @@ mod tests {
             .unwrap();
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn sent_files_and_images_arrive_whole() {
+        use timeline::{Line, MediaKind};
+
+        // Room, Alice's name for it, the other member and their name for it.
+        for (key, name, other, other_name) in [
+            ("dm-plain", "Bob Brown", "bob", "Alice Anderson"),
+            ("dm-e2ee", "Carol Chen", "carol", "Alice Anderson"),
+        ] {
+            let alice_dir = tempfile::tempdir().unwrap();
+            let (alice, alice_sync, alice_list, room_id) =
+                sign_on_to_seed_room(alice_dir.path(), "alice", key, name).await;
+            let other_dir = tempfile::tempdir().unwrap();
+            let (them, their_sync, their_list, _) =
+                sign_on_to_seed_room(other_dir.path(), other, key, other_name).await;
+            let (_, alice_watch, _) = watch_lines(&alice, &room_id).await;
+            let (mut lines, their_watch, mut diffs) = watch_lines(&them, &room_id).await;
+            if key == "dm-e2ee" {
+                knows_device(&alice, &them).await;
+            }
+
+            let tag = rand::random::<u32>();
+            let files = tempfile::tempdir().unwrap();
+            let text_name = format!("notes-{tag}.txt");
+            let text = format!("notes for {tag}\n").into_bytes();
+            std::fs::write(files.path().join(&text_name), &text).unwrap();
+            // Big enough to get a thumbnail.
+            let image_name = format!("pic-{tag}.png");
+            let image = image::RgbImage::from_fn(1200, 900, |x, y| {
+                image::Rgb([(x % 256) as u8, (y % 256) as u8, (tag % 256) as u8])
+            });
+            image.save(files.path().join(&image_name)).unwrap();
+            let png = std::fs::read(files.path().join(&image_name)).unwrap();
+
+            for file_name in [&text_name, &image_name] {
+                let prepared =
+                    upload::prepare(upload::Source::File(files.path().join(file_name))).unwrap();
+                let total = prepared.bytes.len();
+                let sent = std::sync::Mutex::new(Vec::new());
+                alice_watch
+                    .send_file(prepared, |s, t| sent.lock().unwrap().push((s, t)))
+                    .await
+                    .unwrap();
+                let sent = sent.into_inner().unwrap();
+                assert!(
+                    sent.iter().any(|&(s, t)| s == t && t >= total),
+                    "{key} {file_name}: progress never reached the end: {sent:?}"
+                );
+            }
+
+            let event_of = |l: &[Line], kind: MediaKind, file: &str| {
+                l.iter().find_map(|line| match line {
+                    Line::Message {
+                        media: Some(m),
+                        event_id: Some(id),
+                        ..
+                    } if m.kind == kind && m.name == file => Some((id.clone(), m.clone())),
+                    _ => None,
+                })
+            };
+            wait_for_lines(&mut lines, &mut diffs, "both files", |l| {
+                event_of(l, MediaKind::File, &text_name).is_some()
+                    && event_of(l, MediaKind::Image, &image_name).is_some()
+            })
+            .await;
+
+            let (image_event, media) = event_of(&lines, MediaKind::Image, &image_name).unwrap();
+            assert_eq!(
+                (media.width, media.height, media.size),
+                (Some(1200), Some(900), Some(png.len() as u64)),
+                "{key}"
+            );
+            let room = them
+                .get_room(&matrix_sdk::ruma::RoomId::parse(&room_id).unwrap())
+                .unwrap();
+            let event = room
+                .event(
+                    &matrix_sdk::ruma::EventId::parse(&image_event).unwrap(),
+                    None,
+                )
+                .await
+                .unwrap();
+            let json: serde_json::Value = event.raw().deserialize_as().unwrap();
+            let info = &json["content"]["info"];
+            assert_eq!(info["thumbnail_info"]["w"], 800, "{key}: {info}");
+            assert_eq!(info["mimetype"], "image/png", "{key}: {info}");
+            if key == "dm-e2ee" {
+                assert!(json["content"]["file"].is_object(), "{key}: not encrypted");
+                assert!(
+                    info["thumbnail_file"].is_object(),
+                    "{key}: thumbnail not encrypted"
+                );
+            }
+
+            let out = tempfile::tempdir().unwrap();
+            for (kind, file, contents) in [
+                (MediaKind::File, &text_name, &text),
+                (MediaKind::Image, &image_name, &png),
+            ] {
+                let (event_id, _) = event_of(&lines, kind, file).unwrap();
+                let path = out.path().join(file);
+                their_watch
+                    .save_attachment(&event_id, path.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(&std::fs::read(&path).unwrap(), contents, "{key} {file}");
+            }
+
+            for (watching, list, syncing, client) in [
+                (alice_watch, alice_list, alice_sync, alice),
+                (their_watch, their_list, their_sync, them),
+            ] {
+                drop(watching);
+                list.abort();
+                syncing.stop().await;
+                client.logout().await.unwrap();
+            }
         }
     }
 }
