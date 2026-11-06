@@ -25,7 +25,7 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 - Emoji verification works against your other sessions.
 - Accounts without recovery can set it up.
 
-Coming next (Phase 6 in `PLAN.md`): original sounds with mute, Add Buddy, Block, a Preferences window, auto-reply and Linux packages.
+Coming next (see `PLAN.md`): Add Buddy, Block, a Preferences window, auto-reply and Linux packages; then other server software, matrix.org testing and browser (OAuth) sign-on; and last, original sounds with mute.
 
 What counts as a DM: a room listed in `m.direct`, or one with at most two members. Tag a room `aimtrix.chat` to make it open as a Chat Room anyway.
 

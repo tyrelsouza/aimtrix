@@ -17,7 +17,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use matrix_sdk::{Client, ruma::api::error::ErrorKind};
+use matrix_sdk::{
+    Client,
+    ruma::api::error::{ErrorBody, ErrorKind},
+};
 use rand::distr::{Alphanumeric, SampleString};
 use tauri::async_runtime::{Mutex, spawn_blocking};
 
@@ -146,13 +149,33 @@ async fn login(
         .login_username(username, password)
         .initial_device_display_name("AIMtrix")
         .await
-        .map_err(|e| match e.client_api_error_kind() {
-            Some(ErrorKind::Forbidden) => "Incorrect screen name or password.".to_owned(),
-            Some(ErrorKind::UserDeactivated) => "This account has been deactivated.".to_owned(),
-            _ => format!("Sign on failed: {e}"),
+        .map_err(|e| {
+            // The server's reason; never includes the password.
+            eprintln!("Sign on to {} failed: {e}", client.homeserver());
+            match e.as_client_api_error().map(|e| &e.body) {
+                Some(ErrorBody::Standard(body)) if body.kind == ErrorKind::Forbidden => {
+                    forbidden(&body.message)
+                }
+                Some(ErrorBody::Standard(body)) if body.kind == ErrorKind::UserDeactivated => {
+                    "This account has been deactivated.".to_owned()
+                }
+                _ => format!("Sign on failed: {e}"),
+            }
         })?;
 
     Ok(client)
+}
+
+/// Why the server refused a sign-on. Usually a wrong password, but servers
+/// also refuse for other reasons (matrix.org: too many sessions), so show
+/// their own message for anything that isn't about the password.
+fn forbidden(message: &str) -> String {
+    let lower = message.to_lowercase();
+    if message.trim().is_empty() || lower.contains("password") || lower.contains("username") {
+        "Incorrect screen name or password.".to_owned()
+    } else {
+        format!("The server refused to sign you on: {message}")
+    }
 }
 
 /// Reopen the store at `store` and restore the saved session into it.
@@ -210,6 +233,22 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, "Incorrect screen name or password.");
+    }
+
+    #[test]
+    fn refusals_other_than_the_password_show_the_servers_reason() {
+        // Synapse's wording.
+        assert_eq!(
+            forbidden("Invalid username or password"),
+            "Incorrect screen name or password."
+        );
+        assert_eq!(forbidden(""), "Incorrect screen name or password.");
+        // matrix.org (MAS) when the account has too many sessions.
+        let limit = "You have reached your hard device limit. Please visit your account page to sign some out.";
+        assert_eq!(
+            forbidden(limit),
+            format!("The server refused to sign you on: {limit}")
+        );
     }
 
     #[tokio::test]
