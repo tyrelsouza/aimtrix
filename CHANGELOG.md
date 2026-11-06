@@ -7,6 +7,10 @@ What changed in each phase of `PLAN.md`, step by step. Open problems live under 
 ### Changes
 - **5.1 Encrypted rooms.** Messages in encrypted rooms send and read both ways with Element, in DMs and Chat Rooms. This worked with no app changes, since the SDK's end-to-end encryption was already on. Messages sent before this device signed on still can't be read (see 5.2 and 5.3).
   - New server test `encrypted_rooms_send_and_receive_both_ways`: two fresh AIMtrix devices exchange messages in the seeded "Carol Chen" DM and "Secret Chat", after checking that both rooms are encrypted.
+- **5.2 Unable to decrypt.** Messages that can't be decrypted show as "*Name*: (encrypted message…)" with the likely reason: waiting for the key, sent before this computer signed on, sent before you joined, the sender didn't share the key, or from an unverified device. When the key arrives, the line turns into the real message in place. Reply previews of such messages say "an encrypted message".
+  - `timeline.rs` has a new `Undecryptable` line with an `UndecryptableReason` taken from the SDK's `UtdCause`. Retrying is left to matrix-sdk, which decrypts again whenever new keys arrive.
+  - `matrix-sdk-crypto` is now a direct dependency (same 0.19.1 already in the build), since `UtdCause` isn't re-exported by `matrix-sdk`.
+  - New server test `undecryptable_messages_turn_into_text_when_keys_arrive`: a second Alice device sees the placeholder for Carol's message, then imports room keys exported from the first device and the placeholder becomes the text.
 
 ## Phase 4: Chat Room window
 

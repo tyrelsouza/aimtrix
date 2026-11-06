@@ -30,6 +30,16 @@ export type Line =
     }
   /** A deleted message. */
   | { type: "deleted"; id: string; name: string; own: boolean; timestamp: number }
+  /** An encrypted message that can't be read yet. Turns into a "message" by itself if the key arrives. */
+  | {
+      type: "undecryptable";
+      id: string;
+      eventId: string | null;
+      name: string;
+      own: boolean;
+      reason: UndecryptableReason;
+      timestamp: number;
+    }
   /** Someone entered or left the room, or was invited, removed or banned. */
   | { type: "membership"; id: string; name: string; change: MemberChange; timestamp: number }
   /** `name` set the topic, or removed it if `topic` is null. */
@@ -37,6 +47,25 @@ export type Line =
   /** The room's first event is loaded: there's no more history. */
   | { type: "start"; id: string }
   | { type: "other"; id: string };
+
+/** Mirrors `UndecryptableReason` in src-tauri/src/matrix/timeline.rs. */
+export type UndecryptableReason = "waiting" | "before-sign-on" | "before-joined" | "withheld" | "untrusted";
+
+/** The placeholder shown instead of a message that can't be decrypted. */
+export function describeUndecryptable(reason: UndecryptableReason): string {
+  switch (reason) {
+    case "waiting":
+      return "(encrypted message, waiting for the key to read it)";
+    case "before-sign-on":
+      return "(encrypted message sent before this computer signed on)";
+    case "before-joined":
+      return "(encrypted message sent before you joined)";
+    case "withheld":
+      return "(encrypted message: the sender didn't share the key)";
+    case "untrusted":
+      return "(encrypted message from an unverified device)";
+  }
+}
 
 /** Mirrors `MemberChange` in src-tauri/src/matrix/timeline.rs. */
 export type MemberChange = "joined" | "left" | "invited" | "kicked" | "banned";

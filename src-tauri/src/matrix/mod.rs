@@ -1676,4 +1676,75 @@ mod tests {
             }
         }
     }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn undecryptable_messages_turn_into_text_when_keys_arrive() {
+        // Alice's first device gets the key as Carol sends.
+        let first_dir = tempfile::tempdir().unwrap();
+        let (first, first_sync, first_list, room_id) =
+            sign_on_to_seed_room(first_dir.path(), "alice", "dm-e2ee", "Carol Chen").await;
+        let (mut first_lines, first_watch, mut first_diffs) = watch_lines(&first, &room_id).await;
+        let carol_dir = tempfile::tempdir().unwrap();
+        let (carol, carol_sync, carol_list, _) =
+            sign_on_to_seed_room(carol_dir.path(), "carol", "dm-e2ee", "Alice Anderson").await;
+        let (_, carol_watch, _) = watch_lines(&carol, &room_id).await;
+        let body = format!("utd test {}", rand::random::<u32>());
+        carol_watch.send(&body, None).await.unwrap();
+        wait_for_lines(&mut first_lines, &mut first_diffs, "Carol's message", |l| {
+            said(l, "Carol Chen", &body, false)
+        })
+        .await;
+        let event_id = first_lines
+            .iter()
+            .find_map(|l| match l {
+                timeline::Line::Message {
+                    event_id, body: b, ..
+                } if *b == body => event_id.clone(),
+                _ => None,
+            })
+            .unwrap();
+
+        // A second device, signed on later, has no key for it…
+        let second_dir = tempfile::tempdir().unwrap();
+        let (second, second_sync, second_list, _) =
+            sign_on_to_seed_room(second_dir.path(), "alice", "dm-e2ee", "Carol Chen").await;
+        let (mut lines, second_watch, mut diffs) = watch_lines(&second, &room_id).await;
+        wait_for_lines(&mut lines, &mut diffs, "the placeholder", |l| {
+            l.iter().any(|line| {
+                matches!(line, timeline::Line::Undecryptable { event_id: Some(e), name, .. }
+                    if *e == event_id && name == "Carol Chen")
+            })
+        })
+        .await;
+
+        // …until it gets one (here by key export; 5.3 brings key backup).
+        let keys = first_dir.path().join("keys.txt");
+        let room = matrix_sdk::ruma::RoomId::parse(&room_id).unwrap();
+        first
+            .encryption()
+            .export_room_keys(keys.clone(), "export pass", |s| s.room_id() == room)
+            .await
+            .unwrap();
+        second
+            .encryption()
+            .import_room_keys(keys, "export pass")
+            .await
+            .unwrap();
+        wait_for_lines(&mut lines, &mut diffs, "the decrypted message", |l| {
+            said(l, "Carol Chen", &body, false)
+        })
+        .await;
+
+        for (watching, list, syncing, client) in [
+            (first_watch, first_list, first_sync, first),
+            (second_watch, second_list, second_sync, second),
+            (carol_watch, carol_list, carol_sync, carol),
+        ] {
+            drop(watching);
+            list.abort();
+            syncing.stop().await;
+            client.logout().await.unwrap();
+        }
+    }
 }

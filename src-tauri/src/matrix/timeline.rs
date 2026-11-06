@@ -23,9 +23,11 @@ use matrix_sdk::{
         },
     },
 };
+use matrix_sdk_crypto::types::events::UtdCause;
 use matrix_sdk_ui::timeline::{
-    AnyOtherStateEventContentChange, EventSendState, MembershipChange, MsgLikeKind, Profile,
-    RoomExt, Timeline, TimelineDetails, TimelineItem, TimelineItemContent, VirtualTimelineItem,
+    AnyOtherStateEventContentChange, EncryptedMessage, EventSendState, MembershipChange,
+    MsgLikeKind, Profile, RoomExt, Timeline, TimelineDetails, TimelineItem, TimelineItemContent,
+    VirtualTimelineItem,
 };
 use serde::Serialize;
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
@@ -78,6 +80,17 @@ pub enum Line {
         own: bool,
         timestamp: u64,
     },
+    /// An encrypted message we can't read (yet): "Name: (encrypted
+    /// message…)". It turns into a [`Line::Message`] by itself if the key
+    /// arrives later.
+    Undecryptable {
+        id: String,
+        event_id: Option<String>,
+        name: String,
+        own: bool,
+        reason: UndecryptableReason,
+        timestamp: u64,
+    },
     /// Someone entered or left the room, or was invited, removed or banned:
     /// "Name has entered the room."
     Membership {
@@ -100,6 +113,38 @@ pub enum Line {
     Start { id: String },
     /// Not shown yet: other message types, other state events, date dividers…
     Other { id: String },
+}
+
+/// Why an encrypted message can't be read, as far as we can tell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UndecryptableReason {
+    /// The key may still come: from the sender, a backup or another device.
+    Waiting,
+    /// Sent before this device signed on, and there's no key backup to get
+    /// it from (or this device can't use it until it's verified).
+    BeforeSignOn,
+    /// Sent before you joined the room.
+    BeforeJoined,
+    /// The sender chose not to share the key with this device.
+    Withheld,
+    /// Sent from a device or person we can't trust, so it was refused.
+    Untrusted,
+}
+
+impl UndecryptableReason {
+    fn from_sdk(cause: UtdCause) -> Self {
+        use UtdCause as C;
+        match cause {
+            C::SentBeforeWeJoined => Self::BeforeJoined,
+            C::HistoricalMessageAndBackupIsDisabled | C::HistoricalMessageAndDeviceIsUnverified => {
+                Self::BeforeSignOn
+            }
+            C::WithheldForUnverifiedOrInsecureDevice | C::WithheldBySender => Self::Withheld,
+            C::VerificationViolation | C::UnsignedDevice | C::UnknownDevice => Self::Untrusted,
+            _ => Self::Waiting,
+        }
+    }
 }
 
 /// A change of membership worth a line in the conversation.
@@ -569,6 +614,20 @@ fn line(item: &TimelineItem) -> Line {
                 timestamp,
             };
         }
+        MsgLikeKind::UnableToDecrypt(encrypted) => {
+            let cause = match encrypted {
+                EncryptedMessage::MegolmV1AesSha2 { cause, .. } => *cause,
+                _ => UtdCause::Unknown,
+            };
+            return Line::Undecryptable {
+                id,
+                event_id: event.event_id().map(ToString::to_string),
+                name,
+                own,
+                reason: UndecryptableReason::from_sdk(cause),
+                timestamp,
+            };
+        }
         _ => return Line::Other { id },
     };
 
@@ -677,6 +736,7 @@ fn preview(content: &TimelineItemContent) -> String {
             _ => message.body().to_owned(),
         },
         Some(MsgLikeKind::Redacted) => "a deleted message".to_owned(),
+        Some(MsgLikeKind::UnableToDecrypt(_)) => "an encrypted message".to_owned(),
         _ => "a message".to_owned(),
     };
     shorten(&text.replace('\n', " "), PREVIEW_LENGTH)
@@ -710,6 +770,32 @@ fn fallback_name(user_id: &UserId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn undecryptable_reasons_follow_the_cause() {
+        use UndecryptableReason as R;
+        assert_eq!(R::from_sdk(UtdCause::Unknown), R::Waiting);
+        assert_eq!(
+            R::from_sdk(UtdCause::HistoricalMessageAndBackupIsDisabled),
+            R::BeforeSignOn
+        );
+        assert_eq!(R::from_sdk(UtdCause::SentBeforeWeJoined), R::BeforeJoined);
+        assert_eq!(R::from_sdk(UtdCause::WithheldBySender), R::Withheld);
+        assert_eq!(R::from_sdk(UtdCause::UnknownDevice), R::Untrusted);
+        assert_eq!(
+            serde_json::to_value(Line::Undecryptable {
+                id: "1".into(),
+                event_id: Some("$e".into()),
+                name: "Bob".into(),
+                own: false,
+                reason: R::BeforeSignOn,
+                timestamp: 5,
+            })
+            .unwrap(),
+            serde_json::json!({"type": "undecryptable", "id": "1", "eventId": "$e", "name": "Bob",
+                "own": false, "reason": "before-sign-on", "timestamp": 5})
+        );
+    }
 
     #[test]
     fn only_some_membership_changes_get_a_line() {

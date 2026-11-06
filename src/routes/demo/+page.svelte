@@ -138,6 +138,7 @@
           <div class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span><button class="aim-msg__attachment" title="Save cat.png…"><img class="aim-msg__image" src={bob} alt="cat.png" style="width: 80px" /></button></div>
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <button class="aim-msg__attachment" title="Save notes.txt…"><span class="aim-msg__file">📎 notes.txt<span class="aim-msg__note"> (12 KB)</span></span></button></p>
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <span class="aim-msg__note">(message deleted)</span></p>
+          <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <span class="aim-msg__note">(encrypted message, waiting for the key to read it)</span></p>
           <p class="aim-msg aim-msg--system">Bob Brown is away: "grabbing lunch"</p>
         </div>
         <img class="aim-buddy-icon" src={bob} alt="Bob's buddy icon" />
