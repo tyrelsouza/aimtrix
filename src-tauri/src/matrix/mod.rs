@@ -1611,4 +1611,69 @@ mod tests {
         syncing.stop().await;
         alice.logout().await.unwrap();
     }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn encrypted_rooms_send_and_receive_both_ways() {
+        // Room, Alice's name for it, the other member and their name for it.
+        for (key, name, other, other_name, other_display) in [
+            (
+                "dm-e2ee",
+                "Carol Chen",
+                "carol",
+                "Alice Anderson",
+                "Carol Chen",
+            ),
+            (
+                "group-e2ee",
+                "Secret Chat",
+                "bob",
+                "Secret Chat",
+                "Bob Brown",
+            ),
+        ] {
+            let alice_dir = tempfile::tempdir().unwrap();
+            let (alice, alice_sync, alice_list, room_id) =
+                sign_on_to_seed_room(alice_dir.path(), "alice", key, name).await;
+            let other_dir = tempfile::tempdir().unwrap();
+            let (them, their_sync, their_list, _) =
+                sign_on_to_seed_room(other_dir.path(), other, key, other_name).await;
+            let room = alice
+                .get_room(&matrix_sdk::ruma::RoomId::parse(&room_id).unwrap())
+                .unwrap();
+            assert!(
+                room.latest_encryption_state().await.unwrap().is_encrypted(),
+                "{key} is encrypted"
+            );
+
+            let (mut alice_lines, alice_watch, mut alice_diffs) =
+                watch_lines(&alice, &room_id).await;
+            let (mut their_lines, their_watch, mut their_diffs) =
+                watch_lines(&them, &room_id).await;
+
+            let body = format!("e2ee from alice {}", rand::random::<u32>());
+            alice_watch.send(&body, None).await.unwrap();
+            wait_for_lines(&mut their_lines, &mut their_diffs, "Alice's message", |l| {
+                said(l, "Alice Anderson", &body, false)
+            })
+            .await;
+
+            let body = format!("e2ee from {other} {}", rand::random::<u32>());
+            their_watch.send(&body, None).await.unwrap();
+            wait_for_lines(&mut alice_lines, &mut alice_diffs, "the reply", |l| {
+                said(l, other_display, &body, false)
+            })
+            .await;
+
+            for (watching, list, syncing, client) in [
+                (alice_watch, alice_list, alice_sync, alice),
+                (their_watch, their_list, their_sync, them),
+            ] {
+                drop(watching);
+                list.abort();
+                syncing.stop().await;
+                client.logout().await.unwrap();
+            }
+        }
+    }
 }

@@ -2,6 +2,12 @@
 
 What changed in each phase of `PLAN.md`, step by step. Open problems live under "Known issues and follow-ups" in `PLAN.md`.
 
+## Phase 5: Encryption
+
+### Changes
+- **5.1 Encrypted rooms.** Messages in encrypted rooms send and read both ways with Element, in DMs and Chat Rooms. This worked with no app changes, since the SDK's end-to-end encryption was already on. Messages sent before this device signed on still can't be read (see 5.2 and 5.3).
+  - New server test `encrypted_rooms_send_and_receive_both_ways`: two fresh AIMtrix devices exchange messages in the seeded "Carol Chen" DM and "Secret Chat", after checking that both rooms are encrypted.
+
 ## Phase 4: Chat Room window
 
 ### Changes

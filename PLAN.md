@@ -100,7 +100,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 - [x] **4.3 Room events.** Show "X has entered/left the room" lines and the topic. *Done when:* changes made in Element appear in the window.
 
 ### Phase 5: Encryption
-- [ ] **5.1 Encrypted rooms.** Confirm encrypted test rooms send and receive on this device. *Done when:* encrypted messages read and send both ways with Element.
+- [x] **5.1 Encrypted rooms.** Confirm encrypted test rooms send and receive on this device. *Done when:* encrypted messages read and send both ways with Element.
 - [ ] **5.2 Unable to decrypt.** Show a clear placeholder for messages that can't be decrypted, and retry when keys arrive. *Done when:* the placeholder later turns into the real text.
 - [ ] **5.3 Recovery key.** Build a window that asks for the recovery key or passphrase on a new device. *Done when:* a fresh login can read old encrypted history.
 - [ ] **5.4 Emoji verification.** Build a Verify window for SAS emoji verification against another device. *Done when:* verifying with Element marks this device as trusted.
