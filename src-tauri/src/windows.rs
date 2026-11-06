@@ -3,7 +3,7 @@
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
-use crate::session;
+use crate::{matrix::rooms::Kind, session};
 
 /// The Buddy List is the `main` window.
 pub fn open_buddy_list(app: &AppHandle) -> tauri::Result<()> {
@@ -37,20 +37,21 @@ pub fn open_sign_on(app: &AppHandle, signed_out: bool) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Open an IM window for `room_id`, titled `name`. There's one window per
-/// room; opening it again focuses it.
-pub fn open_room(app: &AppHandle, room_id: &str, name: &str) -> tauri::Result<()> {
+/// Open the window for `room_id`: an IM for a DM, a Chat Room for a group.
+/// There's one window per room; opening it again focuses it.
+pub fn open_room(app: &AppHandle, room_id: &str, name: &str, kind: Kind) -> tauri::Result<()> {
     let label = room_label(room_id);
     if let Some(window) = app.get_webview_window(&label) {
         // Bring it back if it was minimized, not just focus it.
         window.unminimize()?;
         return window.set_focus();
     }
-    let url = format!("/im?room={}", encode_query(room_id));
+    let style = RoomWindow::for_kind(kind);
+    let url = format!("{}?room={}", style.route, encode_query(room_id));
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
-        .title(name)
-        .inner_size(420.0, 360.0)
-        .min_inner_size(280.0, 220.0)
+        .title(style.title(name))
+        .inner_size(style.size.0, style.size.1)
+        .min_inner_size(style.min_size.0, style.min_size.1)
         .build()?;
     let (app, room_id) = (app.clone(), room_id.to_owned());
     window.on_window_event(move |event| {
@@ -59,6 +60,40 @@ pub fn open_room(app: &AppHandle, room_id: &str, name: &str) -> tauri::Result<()
         }
     });
     Ok(())
+}
+
+/// How a room's window looks, by the kind of room.
+#[derive(Debug, PartialEq)]
+struct RoomWindow {
+    route: &'static str,
+    /// Added to the room's name in the title bar.
+    title_suffix: &'static str,
+    size: (f64, f64),
+    min_size: (f64, f64),
+}
+
+impl RoomWindow {
+    fn for_kind(kind: Kind) -> Self {
+        match kind {
+            Kind::Dm => Self {
+                route: "/im",
+                title_suffix: "",
+                size: (420.0, 360.0),
+                min_size: (280.0, 220.0),
+            },
+            // Wider, to leave room for the member list.
+            Kind::Group => Self {
+                route: "/chat",
+                title_suffix: " - Chat Room",
+                size: (540.0, 400.0),
+                min_size: (360.0, 240.0),
+            },
+        }
+    }
+
+    fn title(&self, name: &str) -> String {
+        format!("{name}{}", self.title_suffix)
+    }
 }
 
 /// Prefix of every room window's label.
@@ -114,6 +149,16 @@ mod tests {
     fn fnv1a_matches_reference_values() {
         assert_eq!(fnv1a(b""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a(b"a"), 0xaf63_dc4c_8601_ec8c);
+    }
+
+    #[test]
+    fn groups_open_chat_rooms_and_dms_open_ims() {
+        let im = RoomWindow::for_kind(Kind::Dm);
+        assert_eq!(im.route, "/im");
+        assert_eq!(im.title("Bob Brown"), "Bob Brown");
+        let chat = RoomWindow::for_kind(Kind::Group);
+        assert_eq!(chat.route, "/chat");
+        assert_eq!(chat.title("Test Chat"), "Test Chat - Chat Room");
     }
 
     #[test]

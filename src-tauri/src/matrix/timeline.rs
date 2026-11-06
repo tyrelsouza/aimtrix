@@ -1,4 +1,4 @@
-//! A room's conversation, as lines for an IM window.
+//! A room's conversation, as lines for its IM or Chat Room window.
 //!
 //! [`watch`] follows a room's [`Timeline`] and turns each change into a
 //! [`Diff`] of [`Line`]s. Every timeline item maps to exactly one line, so

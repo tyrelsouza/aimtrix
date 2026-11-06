@@ -95,7 +95,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 - [x] **3.9 Save attachments.** Clicking a file or image in an IM window opens a Save dialog and saves it there, decrypted in encrypted rooms. *Done when:* a file and an image sent from Element can be saved and opened.
 
 ### Phase 4: Chat Room window
-- [ ] **4.1 Chat Room window.** Reuse the timeline component in a Chat Room layout for group rooms. *Done when:* a group opens as a Chat Room and a DM opens as an IM.
+- [x] **4.1 Chat Room window.** Reuse the timeline component in a Chat Room layout for group rooms. *Done when:* a group opens as a Chat Room and a DM opens as an IM.
 - [ ] **4.2 Member list.** Add a member pane with display names and icons. *Done when:* it updates when someone joins.
 - [ ] **4.3 Room events.** Show "X has entered/left the room" lines and the topic. *Done when:* changes made in Element appear in the window.
 

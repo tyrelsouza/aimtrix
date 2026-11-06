@@ -172,7 +172,7 @@
   </section>
 
   <!-- Chat Room window (inactive title bar) -->
-  <section class="aim-window" style="width: 420px; height: 300px">
+  <section class="aim-window" style="width: 420px; height: 340px">
     <div class="aim-titlebar is-inactive">
       <img class="aim-titlebar__icon" src={appIcon} alt="" />
       <span class="aim-titlebar__title">Test Chat - Chat Room</span>
@@ -199,8 +199,15 @@
           </ul>
         </div>
       </div>
-      <div class="row">
-        <input class="aim-field grow" placeholder="Say something…" />
+      <div class="aim-toolbar">
+        <button class="aim-toolbar__btn"><b>B</b></button>
+        <button class="aim-toolbar__btn"><i>I</i></button>
+        <button class="aim-toolbar__btn"><u>U</u></button>
+        <span class="aim-toolbar__sep"></span>
+        <button class="aim-toolbar__btn">A</button>
+      </div>
+      <textarea class="aim-field" rows="2">hi all</textarea>
+      <div class="row end">
         <button class="aim-btn is-default">Send</button>
       </div>
     </div>

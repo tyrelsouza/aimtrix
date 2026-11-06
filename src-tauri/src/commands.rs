@@ -89,28 +89,28 @@ pub async fn decline_invite(session: State<'_, Session>, room_id: String) -> Res
     rooms::decline(&client(&session).await?, &room_id).await
 }
 
-/// Open the IM window for a room on the Buddy List, or focus it if it's
-/// already open.
+/// Open the IM or Chat Room window for a room on the Buddy List, or focus
+/// it if it's already open.
 #[tauri::command]
 pub fn open_room(
     app: AppHandle,
     session: State<'_, Session>,
     room_id: String,
 ) -> Result<(), String> {
-    let name = {
+    let (name, kind) = {
         let buddies = session.buddies.lock().unwrap();
         match buddies.iter().find(|b| b.room_id == room_id) {
             Some(b) if b.section == Section::Invitations => {
                 return Err("Accept the invitation to open this room.".to_owned());
             }
-            Some(b) => b.name.clone(),
+            Some(b) => (b.name.clone(), b.kind),
             None => return Err("That room isn't on your Buddy List.".to_owned()),
         }
     };
-    windows::open_room(&app, &room_id, &name).map_err(|e| e.to_string())
+    windows::open_room(&app, &room_id, &name, kind).map_err(|e| e.to_string())
 }
 
-/// The lines of a room's conversation, for its IM window. Changes arrive as
+/// The lines of a room's conversation, for its window. Changes arrive as
 /// `room:<key>:timeline_diff` events, where `<key>` is the end of the
 /// window's `room-<key>` label.
 #[tauri::command]
@@ -122,7 +122,7 @@ pub async fn room_timeline(
     session::watch_timeline(&app, &client(&session).await?, &room_id).await
 }
 
-/// Send a message from a room's IM window. `body` is the plain text;
+/// Send a message from a room's window. `body` is the plain text;
 /// `html` is the formatted version, if any, and gets cleaned first.
 #[tauri::command]
 pub async fn send_message(
@@ -137,7 +137,7 @@ pub async fn send_message(
     session::send_message(&app, &room_id, &body, html.as_deref()).await
 }
 
-/// Load older messages in a room's IM window; they arrive as
+/// Load older messages in a room's window; they arrive as
 /// `room:<key>:timeline_diff` events. Returns whether the room's first
 /// message was reached.
 #[tauri::command]
@@ -145,14 +145,14 @@ pub async fn load_older(app: AppHandle, room_id: String) -> Result<bool, String>
     session::load_older(&app, &room_id).await
 }
 
-/// Tell the room whether you're typing in its IM window. Others' typing
+/// Tell the room whether you're typing in its window. Others' typing
 /// arrives as `room:<key>:typing` events with their names.
 #[tauri::command]
 pub async fn set_typing(app: AppHandle, room_id: String, typing: bool) -> Result<(), String> {
     session::set_typing(&app, &room_id, typing).await
 }
 
-/// Mark a room read from its IM window, while you're looking at it. The
+/// Mark a room read from its window, while you're looking at it. The
 /// Buddy List un-bolds it on the next update.
 #[tauri::command]
 pub async fn mark_read(app: AppHandle, room_id: String) -> Result<(), String> {
@@ -192,7 +192,7 @@ pub async fn my_icon(session: State<'_, Session>) -> Result<Option<String>, Stri
         .map_err(|e| format!("Couldn't fetch your Buddy Icon: {e}"))
 }
 
-/// The thumbnail of an image message in a room's IM window, as a `data:`
+/// The thumbnail of an image message in a room's window, as a `data:`
 /// URL.
 #[tauri::command]
 pub async fn image_thumbnail(
@@ -203,7 +203,7 @@ pub async fn image_thumbnail(
     session::thumbnail(&app, &room_id, &event_id).await
 }
 
-/// Ask where to save an attachment from a room's IM window, then save it.
+/// Ask where to save an attachment from a room's window, then save it.
 /// Returns the file name it was saved as, or `None` if you cancelled.
 #[tauri::command]
 pub async fn save_attachment(
