@@ -2,6 +2,7 @@
 
 use matrix_sdk::Client;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::{
     matrix::{
@@ -200,6 +201,37 @@ pub async fn image_thumbnail(
     event_id: String,
 ) -> Result<String, String> {
     session::thumbnail(&app, &room_id, &event_id).await
+}
+
+/// Ask where to save an attachment from a room's IM window, then save it.
+/// Returns the file name it was saved as, or `None` if you cancelled.
+#[tauri::command]
+pub async fn save_attachment(
+    app: AppHandle,
+    window: WebviewWindow,
+    room_id: String,
+    event_id: String,
+) -> Result<Option<String>, String> {
+    let name = session::attachment_name(&app, &room_id, &event_id).await?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Save File")
+        .set_file_name(&name)
+        .set_parent(&window)
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+    let Some(path) = rx.await.map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    let path = path.into_path().map_err(|e| e.to_string())?;
+    let saved_as = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or(name);
+    session::save_attachment(&app, &room_id, &event_id, path).await?;
+    Ok(Some(saved_as))
 }
 
 /// The signed-on client. Cloned so the session isn't locked while it's used.

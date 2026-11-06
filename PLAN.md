@@ -92,7 +92,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 - [x] **3.6 Formatting.** Add a B/I/U and font-color toolbar that sends `formatted_body`, and render incoming HTML safely (sanitized). *Done when:* formatting survives a round trip with Element, and a `<script>` tag gets stripped.
 - [x] **3.7 Buddy icon pane and read receipts.** Show the buddy icon pane and mark the room read when the window has focus. *Done when:* the bold in the Buddy List clears after reading.
 - [x] **3.8 Other message types.** Handle images (thumbnails), files, edits, deletions (redactions) and basic replies. *Done when:* each type sent from Element shows up sensibly.
-- [ ] **3.9 Save attachments.** Clicking a file or image in an IM window opens a Save dialog and saves it there, decrypted in encrypted rooms. *Done when:* a file and an image sent from Element can be saved and opened.
+- [x] **3.9 Save attachments.** Clicking a file or image in an IM window opens a Save dialog and saves it there, decrypted in encrypted rooms. *Done when:* a file and an image sent from Element can be saved and opened.
 
 ### Phase 4: Chat Room window
 - [ ] **4.1 Chat Room window.** Reuse the timeline component in a Chat Room layout for group rooms. *Done when:* a group opens as a Chat Room and a DM opens as an IM.
@@ -133,8 +133,8 @@ Not tied to a step. Tick or remove them as they're dealt with.
 - [ ] **No full-size image viewer.** Images show a thumbnail; 3.9 makes them savable, but there's no way to view one full size in the app.
 - [ ] **Videos and audio show as files.** No thumbnail or player yet.
 - [ ] **Links in messages don't open.** Clicking one does nothing (so it can't navigate the window away). Open them in the browser with the Tauri opener plugin.
-- [ ] **`formatting_round_trips_and_scripts_are_stripped` failed once** in a full parallel run (during 3.8), then passed alone twice and in three full runs. The failing wait wasn't captured. Suspect: several tests share Bob's DM at once. If it recurs, note which wait timed out; giving each test its own room would rule it out.
-- **Killed test runs leave debris.** A test stopped before its cleanup leaves rooms and invites on the test accounts, and tests that look rooms up by name can then pick the wrong one. Find rooms by ID where possible, and clean up the accounts after killing a run.
+- [x] **Flaky timeline tests under the full parallel run.** Fixed in 3.9. Two causes: the room list syncs only 1 event per room, so a burst of messages reset open conversations to the newest few (rooms with an open window are now subscribed, getting up to 20 per sync); and tests found Bob's DM by name, sometimes picking another test's temporary room (they now find seeded rooms by their `aimtrix.seed` marker).
+- **Killed test runs leave debris.** A test stopped before its cleanup leaves rooms and invites on the test accounts, and tests that look rooms up by name can then pick the wrong one. Find rooms by ID or by the seed marker (`seed_room` in the tests), not by name, and clean up the accounts after killing a run.
 - **Dev server rate limits.** Synapse's newer `rc_room_creation` limit made room-creating tests stall for minutes. `dev/synapse/homeserver.yaml` now relaxes it with the other limits; relax any new limit Synapse adds the same way.
 
 ## Verification

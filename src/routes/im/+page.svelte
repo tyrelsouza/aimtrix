@@ -59,6 +59,30 @@
     }
   });
 
+  /** The attachment being saved, by name. */
+  let saving = $state<string | null>(null);
+  /** A short-lived status bar message, e.g. "Saved notes.txt". */
+  let notice = $state("");
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function saveAttachment(eventId: string, name: string) {
+    saving = name;
+    error = "";
+    try {
+      // Rust asks where to save it; null means you cancelled.
+      const savedAs = await invoke<string | null>("save_attachment", { roomId, eventId });
+      if (savedAs !== null) {
+        notice = `Saved ${savedAs}`;
+        clearTimeout(noticeTimer);
+        noticeTimer = setTimeout(() => (notice = ""), 4000);
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      saving = null;
+    }
+  }
+
   /** Following the newest message, i.e. scrolled to the bottom. */
   let pinned = true;
 
@@ -328,18 +352,26 @@
               {#if line.media}
                 {@const media = line.media}
                 {@const thumbnail = line.eventId ? thumbnails[line.eventId] : undefined}
-                {#if media.kind === "image" && thumbnail}
-                  <img
-                    class="aim-msg__image"
-                    src={thumbnail}
-                    alt={media.name}
-                    title={media.name}
-                    style:aspect-ratio={media.width && media.height ? `${media.width} / ${media.height}` : undefined}
-                    onload={imageLoaded}
-                  />
-                {:else}
-                  <span class="aim-msg__file">{MEDIA_ICONS[media.kind]} {media.name}{#if media.size !== null}<span class="aim-msg__note"> ({formatSize(media.size)})</span>{/if}</span>
-                {/if}
+                {@const eventId = line.eventId}
+                <button
+                  type="button"
+                  class="aim-msg__attachment"
+                  title="Save {media.name}…"
+                  disabled={!eventId || saving !== null}
+                  onclick={() => eventId && saveAttachment(eventId, media.name)}
+                >
+                  {#if media.kind === "image" && thumbnail}
+                    <img
+                      class="aim-msg__image"
+                      src={thumbnail}
+                      alt={media.name}
+                      style:aspect-ratio={media.width && media.height ? `${media.width} / ${media.height}` : undefined}
+                      onload={imageLoaded}
+                    />
+                  {:else}
+                    <span class="aim-msg__file">{MEDIA_ICONS[media.kind]} {media.name}{#if media.size !== null}<span class="aim-msg__note"> ({formatSize(media.size)})</span>{/if}</span>
+                  {/if}
+                </button>
               {/if}
               {#if !line.media || line.body !== line.media.name}{#if line.html}<span class="aim-msg__html" use:mxFormatting={line.html}>{@html line.html}</span>{:else}<span class="aim-msg__text">{line.body}</span>{/if}{/if}{#if line.edited}<span class="aim-msg__note"> (edited)</span>{/if}{#if line.failed}<span class="aim-msg__note"> (not sent)</span>{/if}
             </div>
@@ -404,7 +436,11 @@
   <footer class="aim-statusbar">
     <!-- Here, not above the messages, so the text doesn't jump. -->
     <span class="aim-statusbar__section" role="status">
-      {loading ? "Loading older messages…" : describeTyping(typing) || name}
+      {loading
+        ? "Loading older messages…"
+        : saving !== null
+          ? `Saving ${saving}…`
+          : notice || describeTyping(typing) || name}
     </span>
   </footer>
 </div>

@@ -25,8 +25,8 @@ use matrix_sdk_ui::timeline::{
     TimelineItemContent, VirtualTimelineItem,
 };
 use serde::Serialize;
-use std::{collections::HashSet, sync::Arc};
-use tauri::async_runtime::{JoinHandle, spawn};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use tauri::async_runtime::{JoinHandle, spawn, spawn_blocking};
 
 use super::{html, media};
 use tokio::sync::broadcast::error::RecvError;
@@ -299,6 +299,57 @@ impl Watching {
         Ok(media::data_url(&bytes))
     }
 
+    /// The file name an attachment message suggests saving it as.
+    pub async fn attachment_name(&self, event_id: &str) -> Result<String, String> {
+        let (name, _) = self.attachment(event_id).await?;
+        Ok(safe_file_name(&name))
+    }
+
+    /// Download an attachment message's file, decrypted if need be, and
+    /// write it to `path`.
+    pub async fn save_attachment(&self, event_id: &str, path: PathBuf) -> Result<(), String> {
+        let (_, source) = self.attachment(event_id).await?;
+        let bytes = self
+            .timeline
+            .room()
+            .client()
+            .media()
+            .get_media_content(
+                &MediaRequestParameters {
+                    source,
+                    format: MediaFormat::File,
+                },
+                true,
+            )
+            .await
+            .map_err(|e| format!("Couldn't download the file: {e}"))?;
+        spawn_blocking(move || std::fs::write(&path, bytes))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("Couldn't save the file: {e}"))
+    }
+
+    /// An attachment message's file name and where its file is.
+    async fn attachment(&self, event_id: &str) -> Result<(String, MediaSource), String> {
+        let event_id = EventId::parse(event_id).map_err(|e| format!("Bad event ID: {e}"))?;
+        let item = self
+            .timeline
+            .item_by_event_id(&event_id)
+            .await
+            .ok_or_else(|| "That message isn't loaded.".to_owned())?;
+        let (filename, body, source) = match item.content().as_message().map(|m| m.msgtype()) {
+            Some(MessageType::Image(c)) => (&c.filename, &c.body, &c.source),
+            Some(MessageType::Video(c)) => (&c.filename, &c.body, &c.source),
+            Some(MessageType::Audio(c)) => (&c.filename, &c.body, &c.source),
+            Some(MessageType::File(c)) => (&c.filename, &c.body, &c.source),
+            _ => return Err("That message has no file.".to_owned()),
+        };
+        Ok((
+            filename.clone().unwrap_or_else(|| body.clone()),
+            source.clone(),
+        ))
+    }
+
     /// Load a page of older history; it arrives as diffs. Returns whether
     /// the start of the room was reached.
     pub async fn load_older(&self) -> Result<bool, String> {
@@ -561,6 +612,18 @@ fn shorten(text: &str, max: usize) -> String {
     }
 }
 
+/// The last part of a sender-chosen file name, so a name like `../x` can't
+/// pick the folder it's saved in.
+fn safe_file_name(name: &str) -> String {
+    // Senders on other systems may use either separator.
+    name.rsplit(['/', '\\'])
+        .next()
+        .map(str::trim)
+        .filter(|n| !n.is_empty() && *n != "." && *n != "..")
+        .unwrap_or("attachment")
+        .to_owned()
+}
+
 /// `@bob:example.org` → `bob`, for senders without a display name.
 fn fallback_name(user_id: &UserId) -> String {
     user_id.localpart().to_owned()
@@ -631,6 +694,17 @@ mod tests {
             .unwrap(),
             serde_json::json!({ "op": "pushFront", "value": { "type": "other", "id": "2" } })
         );
+    }
+
+    #[test]
+    fn file_names_cannot_pick_the_folder() {
+        assert_eq!(safe_file_name("notes.txt"), "notes.txt");
+        assert_eq!(safe_file_name("../../.bashrc"), ".bashrc");
+        assert_eq!(safe_file_name("/etc/passwd"), "passwd");
+        assert_eq!(safe_file_name("C:\\Windows\\evil.dll"), "evil.dll");
+        assert_eq!(safe_file_name(".."), "attachment");
+        assert_eq!(safe_file_name("dir/"), "attachment");
+        assert_eq!(safe_file_name(""), "attachment");
     }
 
     #[test]

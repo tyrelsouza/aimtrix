@@ -12,6 +12,7 @@ use tauri::{AppHandle, Manager};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(matrix::Session::default())
         .setup(|app| {
             let app = app.handle().clone();
@@ -40,7 +41,8 @@ pub fn run() {
             commands::mark_read,
             commands::my_icon,
             commands::room_icon,
-            commands::image_thumbnail
+            commands::image_thumbnail,
+            commands::save_attachment
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

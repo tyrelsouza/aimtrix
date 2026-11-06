@@ -4,7 +4,10 @@
 
 use std::sync::Arc;
 
-use matrix_sdk::Client;
+use matrix_sdk::{
+    Client,
+    ruma::{OwnedRoomId, RoomId},
+};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
@@ -97,6 +100,7 @@ pub async fn watch_timeline(
         .lock()
         .unwrap()
         .insert(room_id.to_owned(), Arc::new(watching));
+    subscribe_open_rooms(app).await;
     Ok(lines)
 }
 
@@ -107,6 +111,28 @@ pub fn unwatch_timeline(app: &AppHandle, room_id: &str) {
         .lock()
         .unwrap()
         .remove(room_id);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move { subscribe_open_rooms(&app).await });
+}
+
+/// Have sync send rooms with an open window in full. The room list alone
+/// gets one event per room per sync, so a burst of messages leaves a gap
+/// and the open conversation jumps back to just the newest few.
+async fn subscribe_open_rooms(app: &AppHandle) {
+    let room_ids: Vec<OwnedRoomId> = app
+        .state::<Session>()
+        .timelines
+        .lock()
+        .unwrap()
+        .keys()
+        .filter_map(|id| RoomId::parse(id).ok())
+        .collect();
+    let service = match app.state::<Session>().signed.lock().await.as_ref() {
+        Some(signed) => signed.sync.room_list_service(),
+        None => return,
+    };
+    let room_ids: Vec<&RoomId> = room_ids.iter().map(|id| &**id).collect();
+    service.set_room_subscriptions(&room_ids).await;
 }
 
 /// Send a message to a room whose window is open: plain text, plus
@@ -133,6 +159,28 @@ pub async fn mark_read(app: &AppHandle, room_id: &str) -> Result<(), String> {
 /// An image's thumbnail, in a room whose window is open.
 pub async fn thumbnail(app: &AppHandle, room_id: &str, event_id: &str) -> Result<String, String> {
     watching(app, room_id)?.thumbnail(event_id).await
+}
+
+/// The suggested file name for an attachment, in a room whose window is
+/// open.
+pub async fn attachment_name(
+    app: &AppHandle,
+    room_id: &str,
+    event_id: &str,
+) -> Result<String, String> {
+    watching(app, room_id)?.attachment_name(event_id).await
+}
+
+/// Save an attachment to `path`, in a room whose window is open.
+pub async fn save_attachment(
+    app: &AppHandle,
+    room_id: &str,
+    event_id: &str,
+    path: std::path::PathBuf,
+) -> Result<(), String> {
+    watching(app, room_id)?
+        .save_attachment(event_id, path)
+        .await
 }
 
 /// Load older history in a room whose window is open. Returns whether the

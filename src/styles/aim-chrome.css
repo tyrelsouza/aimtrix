@@ -513,6 +513,31 @@ button.aim-list__item:focus-visible {
   box-shadow: var(--bevel-thin-sunken);
 }
 
+/* Clickable wrapper around an attachment (to save it). */
+.aim-msg__attachment {
+  display: inline-block;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.aim-msg__attachment:disabled {
+  cursor: default;
+}
+
+.aim-msg__attachment:focus-visible {
+  outline: 1px dotted var(--c-text);
+  outline-offset: 1px;
+}
+
+.aim-msg__attachment:active:not(:disabled) .aim-msg__file {
+  box-shadow: var(--bevel-thin-sunken);
+}
+
 /* A file, video or audio attachment. */
 .aim-msg__file {
   display: inline-block;

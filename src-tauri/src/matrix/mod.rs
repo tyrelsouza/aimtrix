@@ -682,7 +682,9 @@ mod tests {
             }
         })
         .await;
-        let room_id = room_id.lock().unwrap().clone();
+        // By its seed marker: other tests make rooms that are also "Bob Brown".
+        let _ = room_id;
+        let room_id = seed_room(&alice, "dm-plain").await;
 
         let (tx, mut diffs) = tokio::sync::mpsc::unbounded_channel();
         let (mut lines, task) = timeline::watch(
@@ -731,6 +733,55 @@ mod tests {
         alice.logout().await.unwrap();
     }
 
+    /// The room `dev/seed.py` made under `key` (e.g. `dm-plain`), found by
+    /// its `aimtrix.seed` marker. Names aren't enough: other tests make
+    /// rooms that are also called "Bob Brown" for a while.
+    async fn seed_room(client: &Client, key: &str) -> String {
+        use matrix_sdk::ruma::{
+            api::client::state::get_state_event_for_key::v3::Request, events::StateEventType,
+        };
+        for room in client.joined_rooms() {
+            let request = Request::new(
+                room.room_id().to_owned(),
+                StateEventType::from("aimtrix.seed"),
+                String::new(),
+            );
+            if let Ok(response) = client.send(request).await {
+                let content: serde_json::Value =
+                    serde_json::from_str(response.event_or_content.get()).unwrap_or_default();
+                if content["key"] == key {
+                    return room.room_id().to_string();
+                }
+            }
+        }
+        panic!("not in the seeded room {key}; run dev/seed.py");
+    }
+
+    /// [`sign_on_to_room`] for the seeded room `key`, whose Buddy List name
+    /// is `name`.
+    async fn sign_on_to_seed_room(
+        dir: &Path,
+        user: &str,
+        key: &str,
+        name: &str,
+    ) -> (
+        Client,
+        sync::Syncing,
+        tauri::async_runtime::JoinHandle<()>,
+        String,
+    ) {
+        let name = name.to_owned();
+        // Waiting for the name means the room list has loaded.
+        let (client, syncing, watcher, _) =
+            sign_on_to_room(dir, user, move |b| b.name == name).await;
+        let room_id = seed_room(&client, key).await;
+        syncing
+            .room_list_service()
+            .set_room_subscriptions(&[&matrix_sdk::ruma::RoomId::parse(&room_id).unwrap()])
+            .await;
+        (client, syncing, watcher, room_id)
+    }
+
     /// Sign on as `user`, sync, and wait for a room on the list that `is_it`.
     /// Returns the client, its sync, the list watcher and the room ID.
     async fn sign_on_to_room(
@@ -762,6 +813,11 @@ mod tests {
         })
         .await;
         let room_id = room_id.lock().unwrap().clone();
+        // Like an open IM window: sync sends this room in full.
+        syncing
+            .room_list_service()
+            .set_room_subscriptions(&[&matrix_sdk::ruma::RoomId::parse(&room_id).unwrap()])
+            .await;
         (client, syncing, watcher, room_id)
     }
 
@@ -770,7 +826,7 @@ mod tests {
     async fn sent_messages_show_at_once_and_reach_the_buddy() {
         let alice_dir = tempfile::tempdir().unwrap();
         let (alice, alice_sync, alice_list, room_id) =
-            sign_on_to_room(alice_dir.path(), "alice", |b| b.name == "Bob Brown").await;
+            sign_on_to_seed_room(alice_dir.path(), "alice", "dm-plain", "Bob Brown").await;
         let (tx, mut diffs) = tokio::sync::mpsc::unbounded_channel();
         let (mut lines, watching) = timeline::watch(
             &alice,
@@ -837,7 +893,7 @@ mod tests {
     async fn scrolling_back_reaches_the_first_message() {
         let dir = tempfile::tempdir().unwrap();
         let (alice, syncing, list, room_id) =
-            sign_on_to_room(dir.path(), "alice", |b| b.name == "Test Chat").await;
+            sign_on_to_seed_room(dir.path(), "alice", "group-plain", "Test Chat").await;
         let (tx, mut diffs) = tokio::sync::mpsc::unbounded_channel();
         let (mut lines, watching) = timeline::watch(
             &alice,
@@ -859,10 +915,12 @@ mod tests {
             }
         }
         assert!(reached_start, "never reached the start of the room");
+        // The pages arrive as diffs, possibly still on their way, so wait
+        // for the start and the whole backlog, oldest first.
         wait_for_lines(
             &mut lines,
             &mut diffs,
-            "the first message and the start",
+            "the start and the backlog in order",
             |l| {
                 let first = l.iter().find(|line| {
                     matches!(
@@ -870,22 +928,20 @@ mod tests {
                         timeline::Line::Message { .. } | timeline::Line::Start { .. }
                     )
                 });
+                let order: Vec<_> = l
+                    .iter()
+                    .filter_map(|line| match line {
+                        timeline::Line::Message { body, .. } => body
+                            .strip_prefix("backlog message ")
+                            .and_then(|n| n.parse::<u32>().ok()),
+                        _ => None,
+                    })
+                    .collect();
                 matches!(first, Some(timeline::Line::Start { .. }))
-                    && said(l, "Bob Brown", "backlog message 1", false)
+                    && order == (1..=60).collect::<Vec<_>>()
             },
         )
         .await;
-        // The backlog comes in order, oldest first.
-        let order: Vec<_> = lines
-            .iter()
-            .filter_map(|line| match line {
-                timeline::Line::Message { body, .. } => body
-                    .strip_prefix("backlog message ")
-                    .and_then(|n| n.parse::<u32>().ok()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(order, (1..=60).collect::<Vec<_>>());
 
         drop(watching);
         list.abort();
@@ -913,7 +969,7 @@ mod tests {
     async fn typing_shows_both_ways() {
         let alice_dir = tempfile::tempdir().unwrap();
         let (alice, alice_sync, alice_list, room_id) =
-            sign_on_to_room(alice_dir.path(), "alice", |b| b.name == "Bob Brown").await;
+            sign_on_to_seed_room(alice_dir.path(), "alice", "dm-plain", "Bob Brown").await;
         let bob_dir = tempfile::tempdir().unwrap();
         let (bob, bob_sync, bob_list, _) = sign_on_to_room(bob_dir.path(), "bob", {
             let room_id = room_id.clone();
@@ -995,7 +1051,7 @@ mod tests {
 
         let alice_dir = tempfile::tempdir().unwrap();
         let (alice, alice_sync, alice_list, room_id) =
-            sign_on_to_room(alice_dir.path(), "alice", |b| b.name == "Bob Brown").await;
+            sign_on_to_seed_room(alice_dir.path(), "alice", "dm-plain", "Bob Brown").await;
         let bob_dir = tempfile::tempdir().unwrap();
         let (bob, bob_sync, bob_list, _) = sign_on_to_room(bob_dir.path(), "bob", {
             let room_id = room_id.clone();
@@ -1082,11 +1138,15 @@ mod tests {
             }
         })
         .await;
-        let room_id = room_id.lock().unwrap().clone();
+        // By its seed marker: other tests make rooms that are also "Bob Brown".
+        let _ = room_id;
+        let room_id = seed_room(&alice, "dm-plain").await;
         let (mut lines, watching, mut diffs) = watch_lines(&alice, &room_id).await;
         let unread = |want: bool| {
+            let room_id = room_id.clone();
             move |b: &[rooms::Buddy]| {
-                find(b, "Bob Brown").is_some_and(|(_, bob)| bob.unread == want)
+                b.iter()
+                    .any(|bob| bob.room_id == room_id && bob.unread == want)
             }
         };
 
@@ -1181,7 +1241,7 @@ mod tests {
 
         let alice_dir = tempfile::tempdir().unwrap();
         let (alice, alice_sync, alice_list, room_id) =
-            sign_on_to_room(alice_dir.path(), "alice", |b| b.name == "Bob Brown").await;
+            sign_on_to_seed_room(alice_dir.path(), "alice", "dm-plain", "Bob Brown").await;
         let (mut lines, watching, mut diffs) = watch_lines(&alice, &room_id).await;
 
         // Bob sends from another client.
@@ -1299,7 +1359,7 @@ mod tests {
 
         let alice_dir = tempfile::tempdir().unwrap();
         let (alice, alice_sync, alice_list, room_id) =
-            sign_on_to_room(alice_dir.path(), "alice", |b| b.name == "Test Chat").await;
+            sign_on_to_seed_room(alice_dir.path(), "alice", "group-plain", "Test Chat").await;
 
         // Bob replies to the first backlog message, far older than the
         // first page a window loads.
@@ -1342,6 +1402,98 @@ mod tests {
             })
         })
         .await;
+
+        drop(watching);
+        alice_list.abort();
+        alice_sync.stop().await;
+        alice.logout().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn attachments_save_with_their_contents() {
+        use matrix_sdk::{attachment::AttachmentConfig, ruma::RoomId};
+        use timeline::{Line, MediaKind};
+
+        let alice_dir = tempfile::tempdir().unwrap();
+        let (alice, alice_sync, alice_list, room_id) =
+            sign_on_to_seed_room(alice_dir.path(), "alice", "dm-plain", "Bob Brown").await;
+        let (mut lines, watching, mut diffs) = watch_lines(&alice, &room_id).await;
+
+        let tag = rand::random::<u32>();
+        let text = format!("notes for {tag}\nsecond line\n").into_bytes();
+        let png = STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+            .unwrap();
+        // A hostile name: saving must not leave the chosen folder.
+        let file_name = format!("../../save-{tag}.txt");
+        let image_name = format!("pic-{tag}.png");
+        {
+            let bob_dir = tempfile::tempdir().unwrap();
+            let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
+                .await
+                .unwrap();
+            bob.sync_once(matrix_sdk::config::SyncSettings::default())
+                .await
+                .unwrap();
+            let room = bob.get_room(&RoomId::parse(&room_id).unwrap()).unwrap();
+            room.send_attachment(
+                &file_name,
+                &mime::TEXT_PLAIN,
+                text.clone(),
+                AttachmentConfig::new(),
+            )
+            .await
+            .unwrap();
+            room.send_attachment(
+                &image_name,
+                &mime::IMAGE_PNG,
+                png.clone(),
+                AttachmentConfig::new(),
+            )
+            .await
+            .unwrap();
+            bob.logout().await.unwrap();
+        }
+
+        let event_of = |l: &[Line], kind: MediaKind, name: &str| {
+            l.iter().find_map(|line| match line {
+                Line::Message {
+                    media: Some(m),
+                    event_id: Some(id),
+                    ..
+                } if m.kind == kind && m.name == name => Some(id.clone()),
+                _ => None,
+            })
+        };
+        wait_for_lines(&mut lines, &mut diffs, "both attachments", |l| {
+            event_of(l, MediaKind::File, &file_name).is_some()
+                && event_of(l, MediaKind::Image, &image_name).is_some()
+        })
+        .await;
+
+        let out = tempfile::tempdir().unwrap();
+        for (kind, name, saved_name, contents) in [
+            (
+                MediaKind::File,
+                &file_name,
+                format!("save-{tag}.txt"),
+                &text,
+            ),
+            (MediaKind::Image, &image_name, image_name.clone(), &png),
+        ] {
+            let event_id = event_of(&lines, kind, name).unwrap();
+            assert_eq!(
+                watching.attachment_name(&event_id).await.unwrap(),
+                saved_name
+            );
+            let path = out.path().join(&saved_name);
+            watching
+                .save_attachment(&event_id, path.clone())
+                .await
+                .unwrap();
+            assert_eq!(&std::fs::read(&path).unwrap(), contents, "{saved_name}");
+        }
 
         drop(watching);
         alice_list.abort();
