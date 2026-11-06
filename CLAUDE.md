@@ -2,6 +2,11 @@
 
 A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md` for the full design, the AIM→Matrix mapping and the build phases.
 
+## Workflow
+- Work through the `## Steps` checklist in `PLAN.md` one step at a time, in order. Don't start the next step unless asked.
+- A step is finished only when its "Done when" check passes. Then tick its box (`[x]`) in `PLAN.md`.
+- If a step turns out bigger than expected, split it into sub-steps in `PLAN.md` instead of doing it all at once.
+
 ## Stack
 - **Tauri v2** desktop app.
 - **Rust core** (`src-tauri/`): runs a single `matrix-sdk` (matrix-rust-sdk) `Client` with an SQLite store and E2EE. All Matrix logic lives here.

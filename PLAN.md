@@ -61,17 +61,59 @@ AIMtrix/
     assets/sounds/       # original sounds only
 ```
 
-## Phases
-1. **Scaffold and sign-on:** create a Tauri v2 app, add the `matrix-sdk` crate (features `sqlite`, `e2e-encryption`), and log in with a password. SSO/OIDC can come later. Save the session in the OS keyring and restore it on launch. Build the Sign On window.
-2. **Buddy List:** use `RoomListService` (sliding sync) or the classic sync to build the list. Classify rooms as DMs or groups. Show groups, display names and avatar thumbnails. Collapse sections, show unread markers in bold, and open a room on double-click.
-3. **IM window:** subscribe to the room's `Timeline` and render "ScreenName: message" lines with AIM-style colors (you in red, them in blue). Add a send box with basic formatting (B/I/U, font color) that sends `formatted_body`. Add back-pagination, a typing indicator in the status bar, and the buddy icon pane.
-4. **Chat Room window:** the same timeline, plus a member list pane, join/leave lines ("X has entered/left the room") and room topic.
-5. **E2EE:**
-   - On first login, if key backup exists, ask for the recovery key or passphrase (`encryption().recovery().recover()`).
-   - Offer SAS emoji verification against another of your devices in a Verify window.
-   - Set up recovery for brand-new accounts.
-   - Show a clear "unable to decrypt" placeholder that retries when keys arrive.
-6. **AIM extras:** away messages (presence + `status_msg`, auto-reply optional and off by default), sounds (new message, sign-on/off, which require presence), Block (ignore user), "Add Buddy" (start a DM by MXID), invites in the Invitations group, warning-level easter egg optional.
+## Steps
+Work one step at a time, top to bottom. Each step is small enough for one sitting and ends with something you can run or test. When a step is finished, tick its box (`[x]`).
+
+### Phase 0: Foundations
+- [ ] **0.1 Test homeserver.** Add a `docker-compose.yml` with Synapse or conduwuit (presence enabled) and a seed script that creates 3 users, a DM, and a 3-person group, each in an encrypted and an unencrypted version. *Done when:* Element Web can log in as each user and see the rooms.
+- [ ] **0.2 Scaffold.** Run `git init` and create a Tauri v2 app with a TypeScript + Svelte/Solid frontend. *Done when:* `cargo tauri dev` opens an empty window.
+- [ ] **0.3 AIM chrome CSS.** Build `styles/aim-chrome.css` with window frame, title bar, buttons, list, text box and status bar styles. *Done when:* a static demo page shows the pieces.
+
+### Phase 1: Sign On
+- [ ] **1.1 First login.** Add `matrix-sdk` and a `login` command that takes homeserver, username and password. *Done when:* logging in as a test user returns the user ID (never log the token).
+- [ ] **1.2 Sign On window.** Build the form UI, wire it to `login`, and show errors. *Done when:* a bad password shows an error and a good one closes the window.
+- [ ] **1.3 Session restore.** Keep the session in the OS keyring and use the SQLite store. Restore the session on launch and add `logout`. *Done when:* restarting the app skips Sign On, and logout brings it back.
+- [ ] **1.4 Sync.** Start syncing after login and show connection state (connecting, online, error). *Done when:* the status shows online and survives a network blip.
+
+### Phase 2: Buddy List
+- [ ] **2.1 Room classification.** Write a pure function in `rooms.rs` that sorts rooms into DM vs. group and into Favorites/Buddies/Chats/Invitations, with unit tests. No UI. *Done when:* `cargo test` passes and covers stale `m.direct` and the `aimtrix.chat` override.
+- [ ] **2.2 Room list events.** Subscribe to the room list and emit `buddylist:update`. *Done when:* a plain-text list in the main window updates live as rooms change.
+- [ ] **2.3 Buddy List window.** Show collapsible groups with "(n)" counts and display names. *Done when:* it matches the test server's rooms.
+- [ ] **2.4 Unread and ordering.** Bold rooms with unread messages and sort by recent activity. *Done when:* a message sent from Element bolds the buddy and moves it up.
+- [ ] **2.5 Buddy Icons.** In `media.rs`, fetch avatar thumbnails (authenticated media) and cache them on disk. *Done when:* the list shows icons, and rooms without one show a default.
+- [ ] **2.6 Invitations.** Put invites in their own group with Accept and Decline. *Done when:* accepting an invite moves the room into the right group.
+
+### Phase 3: IM window
+- [ ] **3.1 Open window.** `open_room` creates or focuses a `room-<hash>` window titled with the buddy's name. *Done when:* double-clicking twice opens only one window.
+- [ ] **3.2 Read messages.** Subscribe to the room timeline and emit diffs. Render plain-text messages as "Name: text" in AIM colors. *Done when:* existing history shows up and new messages appear live.
+- [ ] **3.3 Send.** Add the text box: Enter sends, Shift+Enter adds a new line. *Done when:* the message shows up in Element.
+- [ ] **3.4 Scrollback.** Load older messages when you scroll up. *Done when:* you can reach the room's first message.
+- [ ] **3.5 Typing.** Send typing notices and show "Name is typing…" in the status bar. *Done when:* it works in both directions with Element.
+- [ ] **3.6 Formatting.** Add a B/I/U and font-color toolbar that sends `formatted_body`, and render incoming HTML safely (sanitized). *Done when:* formatting survives a round trip with Element, and a `<script>` tag gets stripped.
+- [ ] **3.7 Buddy icon pane and read receipts.** Show the buddy icon pane and mark the room read when the window has focus. *Done when:* the bold in the Buddy List clears after reading.
+- [ ] **3.8 Other message types.** Handle images (thumbnails), files, edits, deletions (redactions) and basic replies. *Done when:* each type sent from Element shows up sensibly.
+
+### Phase 4: Chat Room window
+- [ ] **4.1 Chat Room window.** Reuse the timeline component in a Chat Room layout for group rooms. *Done when:* a group opens as a Chat Room and a DM opens as an IM.
+- [ ] **4.2 Member list.** Add a member pane with display names and icons. *Done when:* it updates when someone joins.
+- [ ] **4.3 Room events.** Show "X has entered/left the room" lines and the topic. *Done when:* changes made in Element appear in the window.
+
+### Phase 5: Encryption
+- [ ] **5.1 Encrypted rooms.** Confirm encrypted test rooms send and receive on this device. *Done when:* encrypted messages read and send both ways with Element.
+- [ ] **5.2 Unable to decrypt.** Show a clear placeholder for messages that can't be decrypted, and retry when keys arrive. *Done when:* the placeholder later turns into the real text.
+- [ ] **5.3 Recovery key.** Build a window that asks for the recovery key or passphrase on a new device. *Done when:* a fresh login can read old encrypted history.
+- [ ] **5.4 Emoji verification.** Build a Verify window for SAS emoji verification against another device. *Done when:* verifying with Element marks this device as trusted.
+- [ ] **5.5 New-account setup.** Set up key backup and recovery for accounts that have none, and show the recovery key once. *Done when:* the key from 5.5 works in 5.3 on another device.
+
+### Phase 6: AIM extras
+- [ ] **6.1 Presence.** Detect whether the server has presence. If it does, split buddies into Online and Offline groups. *Done when:* both servers (presence on and off) look right.
+- [ ] **6.2 Away messages.** Set your own away message, and show buddies' away messages in a tooltip and the IM window. *Done when:* an away message set in AIMtrix shows up in Element.
+- [ ] **6.3 Sounds.** Add original sounds for new messages and sign-on/off, plus a mute toggle. *Done when:* sounds play and mute works.
+- [ ] **6.4 Add Buddy.** Start a new DM by entering a Matrix ID. *Done when:* the new DM appears under Buddies.
+- [ ] **6.5 Block.** Block and unblock buddies (ignore user). *Done when:* a blocked user's messages are hidden.
+- [ ] **6.6 Preferences window.** Settings for sounds, auto-reply and fonts. *Done when:* settings persist across restarts.
+- [ ] **6.7 Auto-reply.** When away, auto-reply once per conversation. Off by default. *Done when:* it replies once, not on every message.
+- [ ] **6.8 Packaging.** Build Linux packages (AppImage/deb) with `cargo tauri build`. *Done when:* the package installs and runs on a clean machine.
 
 ## Risks and decisions to make during the build
 - **Presence disabled on many homeservers:** if presence is off, put DMs in "Buddies" ordered by recent activity rather than splitting Online/Offline. Use real online/offline groups only when the server supports presence.
