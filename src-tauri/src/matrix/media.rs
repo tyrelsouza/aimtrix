@@ -71,11 +71,16 @@ pub async fn icon(client: &Client, mxc: &OwnedMxcUri, size: u32) -> matrix_sdk::
         format: MediaFormat::Thumbnail(MediaThumbnailSettings::new(size.into(), size.into())),
     };
     let bytes = client.media().get_media_content(&request, true).await?;
-    Ok(format!(
+    Ok(data_url(&bytes))
+}
+
+/// An image file as a `data:` URL a window can show.
+pub fn data_url(bytes: &[u8]) -> String {
+    format!(
         "data:{};base64,{}",
-        image_type(&bytes),
-        STANDARD.encode(&bytes)
-    ))
+        image_type(bytes),
+        STANDARD.encode(bytes)
+    )
 }
 
 /// The image type, from the file's first bytes.

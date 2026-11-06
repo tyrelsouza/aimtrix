@@ -39,7 +39,8 @@ pub fn run() {
             commands::set_typing,
             commands::mark_read,
             commands::my_icon,
-            commands::room_icon
+            commands::room_icon,
+            commands::image_thumbnail
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

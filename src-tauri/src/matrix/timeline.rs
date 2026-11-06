@@ -10,20 +10,25 @@ use eyeball_im::VectorDiff;
 use futures_util::StreamExt;
 use matrix_sdk::{
     Client, Room, RoomState,
+    media::{MediaFormat, MediaRequestParameters, MediaThumbnailSettings},
     ruma::{
-        OwnedUserId, RoomId, UserId,
+        EventId, OwnedEventId, OwnedUserId, RoomId, UserId,
         api::client::receipt::create_receipt::v3::ReceiptType,
-        events::room::message::{MessageFormat, MessageType, RoomMessageEventContent},
+        events::room::{
+            MediaSource,
+            message::{MessageFormat, MessageType, RoomMessageEventContent},
+        },
     },
 };
 use matrix_sdk_ui::timeline::{
-    EventSendState, RoomExt, Timeline, TimelineDetails, TimelineItem, VirtualTimelineItem,
+    EventSendState, MsgLikeKind, Profile, RoomExt, Timeline, TimelineDetails, TimelineItem,
+    TimelineItemContent, VirtualTimelineItem,
 };
 use serde::Serialize;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use tauri::async_runtime::{JoinHandle, spawn};
 
-use super::html;
+use super::{html, media};
 use tokio::sync::broadcast::error::RecvError;
 
 /// History to load when the window opens, and each time you scroll up.
@@ -31,11 +36,17 @@ const PAGE: u16 = 50;
 
 /// One line of the conversation.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
 pub enum Line {
-    /// "Name: text".
+    /// "Name: text", or an image or file.
     Message {
         id: String,
+        /// `None` until the server has it (our own, while sending).
+        event_id: Option<String>,
         sender: String,
         name: String,
         /// Sent by us.
@@ -46,9 +57,22 @@ pub enum Line {
         html: Option<String>,
         /// `/me`: shown as "* Name text".
         emote: bool,
+        /// Changed after sending; `body` and `html` are the latest version.
+        edited: bool,
+        /// An image or file. `body` is then its caption, or its name.
+        media: Option<Media>,
+        /// The message this one answers.
+        reply: Option<Reply>,
         /// Ours, and the server didn't take it.
         failed: bool,
         /// Milliseconds since the Unix epoch.
+        timestamp: u64,
+    },
+    /// A message that was deleted: "Name: (message deleted)".
+    Deleted {
+        id: String,
+        name: String,
+        own: bool,
         timestamp: u64,
     },
     /// The room's first event is loaded: there's no more history.
@@ -56,6 +80,51 @@ pub enum Line {
     /// Not shown yet: other message types, state events, date dividers…
     Other { id: String },
 }
+
+/// What kind of attachment a message has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MediaKind {
+    Image,
+    Video,
+    Audio,
+    File,
+}
+
+/// An attachment. Images show a thumbnail from [`Watching::thumbnail`].
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Media {
+    pub kind: MediaKind,
+    /// The file name, e.g. `photo.png`.
+    pub name: String,
+    /// In bytes, if the sender said.
+    pub size: Option<u64>,
+    /// In pixels, for images and videos, if the sender said.
+    pub width: Option<u64>,
+    pub height: Option<u64>,
+}
+
+/// A short preview of the message a reply answers.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reply {
+    /// `None` until the message is loaded.
+    pub name: Option<String>,
+    pub preview: Option<String>,
+}
+
+/// Longest reply preview, in characters.
+const PREVIEW_LENGTH: usize = 80;
+
+/// Thumbnail size the server is asked for; shown at up to half that, so it
+/// stays sharp on high-DPI screens.
+const THUMBNAIL_WIDTH: u32 = 480;
+const THUMBNAIL_HEIGHT: u32 = 360;
+
+/// Biggest image shown in full when it has no thumbnail (only encrypted
+/// images, which the server can't shrink): 10 MB.
+const MAX_FULL_IMAGE: u64 = 10_000_000;
 
 /// A change to the lines, mirroring [`VectorDiff`].
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -95,6 +164,11 @@ pub async fn watch(
     let timeline = Arc::new(timeline);
     let (items, mut diffs) = timeline.subscribe().await;
     let lines = items.iter().map(|item| line(item)).collect();
+    // Replies whose message we've asked the SDK to load.
+    let mut replies_asked = HashSet::new();
+    for item in &items {
+        load_replied_to(&timeline, item, &mut replies_asked);
+    }
     // Leaves out our own typing. The guard keeps the subscription alive.
     let (typing_guard, mut typing) = room.subscribe_to_typing_notifications();
 
@@ -121,7 +195,14 @@ pub async fn watch(
                 tokio::select! {
                     () = &mut setup, if setting_up => setting_up = false,
                     batch = diffs.next() => match batch {
-                        Some(batch) => batch.into_iter().map(diff).for_each(&on_diff),
+                        Some(batch) => {
+                            for change in batch {
+                                for item in diff_items(&change) {
+                                    load_replied_to(&timeline, item, &mut replies_asked);
+                                }
+                                on_diff(diff(change));
+                            }
+                        }
                         None => break,
                     },
                     users = typing.recv() => match users {
@@ -171,6 +252,53 @@ impl Watching {
             .map_err(|e| format!("Couldn't mark the conversation read: {e}"))
     }
 
+    /// An image message's thumbnail as a `data:` URL.
+    pub async fn thumbnail(&self, event_id: &str) -> Result<String, String> {
+        let event_id = EventId::parse(event_id).map_err(|e| format!("Bad event ID: {e}"))?;
+        let item = self
+            .timeline
+            .item_by_event_id(&event_id)
+            .await
+            .ok_or_else(|| "That message isn't loaded.".to_owned())?;
+        let Some(MessageType::Image(image)) = item.content().as_message().map(|m| m.msgtype())
+        else {
+            return Err("That message isn't an image.".to_owned());
+        };
+        let info = image.info.as_deref();
+        let (source, format) = match info.and_then(|i| i.thumbnail_source.clone()) {
+            Some(thumbnail) => (thumbnail, MediaFormat::File),
+            None => match &image.source {
+                // The server shrinks it.
+                MediaSource::Plain(_) => (
+                    image.source.clone(),
+                    MediaFormat::Thumbnail(MediaThumbnailSettings::new(
+                        THUMBNAIL_WIDTH.into(),
+                        THUMBNAIL_HEIGHT.into(),
+                    )),
+                ),
+                // The server can't see inside, so it's the whole image.
+                MediaSource::Encrypted(_) => {
+                    if info
+                        .and_then(|i| i.size)
+                        .is_some_and(|s| u64::from(s) > MAX_FULL_IMAGE)
+                    {
+                        return Err("The image is too big to preview.".to_owned());
+                    }
+                    (image.source.clone(), MediaFormat::File)
+                }
+            },
+        };
+        let bytes = self
+            .timeline
+            .room()
+            .client()
+            .media()
+            .get_media_content(&MediaRequestParameters { source, format }, true)
+            .await
+            .map_err(|e| format!("Couldn't load the image: {e}"))?;
+        Ok(media::data_url(&bytes))
+    }
+
     /// Load a page of older history; it arrives as diffs. Returns whether
     /// the start of the room was reached.
     pub async fn load_older(&self) -> Result<bool, String> {
@@ -212,6 +340,52 @@ impl Drop for Watching {
     }
 }
 
+/// If `item` replies to a message that isn't loaded, ask the SDK to load
+/// it, once. The item then updates through a diff.
+fn load_replied_to(
+    timeline: &Arc<Timeline>,
+    item: &TimelineItem,
+    asked: &mut HashSet<OwnedEventId>,
+) {
+    let Some(event) = item.as_event() else {
+        return;
+    };
+    let Some(reply) = event.content().in_reply_to() else {
+        return;
+    };
+    // The SDK looks the reply up by its own ID, so it must have reached the
+    // server; our own reply is asked about again once it has.
+    let Some(reply_id) = event.event_id() else {
+        return;
+    };
+    if !matches!(reply.event, TimelineDetails::Unavailable) || !asked.insert(reply_id.to_owned()) {
+        return;
+    }
+    let (timeline, reply_id) = (timeline.clone(), reply_id.to_owned());
+    spawn(async move {
+        if let Err(e) = timeline.fetch_details_for_event(&reply_id).await {
+            eprintln!(
+                "Couldn't load the message {} replies to ({}): {e}",
+                reply_id, reply.event_id
+            );
+        }
+    });
+}
+
+/// The items a change adds or replaces.
+fn diff_items(diff: &VectorDiff<Arc<TimelineItem>>) -> Vec<&TimelineItem> {
+    match diff {
+        VectorDiff::Append { values } | VectorDiff::Reset { values } => {
+            values.iter().map(|item| &**item).collect()
+        }
+        VectorDiff::PushFront { value }
+        | VectorDiff::PushBack { value }
+        | VectorDiff::Insert { value, .. }
+        | VectorDiff::Set { value, .. } => vec![&**value],
+        _ => Vec::new(),
+    }
+}
+
 fn diff(diff: VectorDiff<Arc<TimelineItem>>) -> Diff {
     match diff {
         VectorDiff::Append { values } => Diff::Append {
@@ -250,13 +424,70 @@ fn line(item: &TimelineItem) -> Line {
             _ => Line::Other { id },
         };
     };
-    let Some(message) = event.content().as_message() else {
+    let Some(msg_like) = event.content().as_msglike() else {
         return Line::Other { id };
     };
-    let (emote, formatted) = match message.msgtype() {
-        MessageType::Text(text) => (false, &text.formatted),
-        MessageType::Notice(notice) => (false, &notice.formatted),
-        MessageType::Emote(emote) => (true, &emote.formatted),
+    let name = sender_name(event.sender_profile(), event.sender());
+    let own = event.is_own();
+    let timestamp = event.timestamp().get().into();
+    let message = match &msg_like.kind {
+        MsgLikeKind::Message(message) => message,
+        MsgLikeKind::Redacted => {
+            return Line::Deleted {
+                id,
+                name,
+                own,
+                timestamp,
+            };
+        }
+        _ => return Line::Other { id },
+    };
+
+    let media = |kind, filename: &Option<String>, body: &str| Media {
+        kind,
+        name: filename.clone().unwrap_or_else(|| body.to_owned()),
+        size: None,
+        width: None,
+        height: None,
+    };
+    let (emote, formatted, media) = match message.msgtype() {
+        MessageType::Text(text) => (false, &text.formatted, None),
+        MessageType::Notice(notice) => (false, &notice.formatted, None),
+        MessageType::Emote(emote) => (true, &emote.formatted, None),
+        MessageType::Image(c) => {
+            let info = c.info.as_deref();
+            let media = Media {
+                size: info.and_then(|i| i.size).map(u64::from),
+                width: info.and_then(|i| i.width).map(u64::from),
+                height: info.and_then(|i| i.height).map(u64::from),
+                ..media(MediaKind::Image, &c.filename, &c.body)
+            };
+            (false, &c.formatted, Some(media))
+        }
+        MessageType::Video(c) => {
+            let info = c.info.as_deref();
+            let media = Media {
+                size: info.and_then(|i| i.size).map(u64::from),
+                width: info.and_then(|i| i.width).map(u64::from),
+                height: info.and_then(|i| i.height).map(u64::from),
+                ..media(MediaKind::Video, &c.filename, &c.body)
+            };
+            (false, &c.formatted, Some(media))
+        }
+        MessageType::Audio(c) => {
+            let media = Media {
+                size: c.info.as_deref().and_then(|i| i.size).map(u64::from),
+                ..media(MediaKind::Audio, &c.filename, &c.body)
+            };
+            (false, &c.formatted, Some(media))
+        }
+        MessageType::File(c) => {
+            let media = Media {
+                size: c.info.as_deref().and_then(|i| i.size).map(u64::from),
+                ..media(MediaKind::File, &c.filename, &c.body)
+            };
+            (false, &c.formatted, Some(media))
+        }
         _ => return Line::Other { id },
     };
     let html = formatted
@@ -264,24 +495,69 @@ fn line(item: &TimelineItem) -> Line {
         .filter(|f| f.format == MessageFormat::Html)
         .map(|f| html::sanitize(&f.body))
         .filter(|html| !html.trim().is_empty());
-    let name = match event.sender_profile() {
-        TimelineDetails::Ready(profile) => profile.display_name.clone(),
-        _ => None,
-    }
-    .unwrap_or_else(|| fallback_name(event.sender()));
+    let reply = msg_like
+        .in_reply_to
+        .as_ref()
+        .map(|reply| match &reply.event {
+            TimelineDetails::Ready(replied) => Reply {
+                name: Some(sender_name(&replied.sender_profile, &replied.sender)),
+                preview: Some(preview(&replied.content)),
+            },
+            _ => Reply {
+                name: None,
+                preview: None,
+            },
+        });
     Line::Message {
         id,
+        event_id: event.event_id().map(ToString::to_string),
         sender: event.sender().to_string(),
         name,
-        own: event.is_own(),
+        own,
         body: message.body().to_owned(),
         html,
         emote,
+        edited: message.is_edited(),
+        media,
+        reply,
         failed: matches!(
             event.send_state(),
             Some(EventSendState::SendingFailed { .. })
         ),
-        timestamp: event.timestamp().get().into(),
+        timestamp,
+    }
+}
+
+/// The display name, or the localpart if there's none.
+fn sender_name(profile: &TimelineDetails<Profile>, sender: &UserId) -> String {
+    match profile {
+        TimelineDetails::Ready(profile) => profile.display_name.clone(),
+        _ => None,
+    }
+    .unwrap_or_else(|| fallback_name(sender))
+}
+
+/// One short line standing for a replied-to message.
+fn preview(content: &TimelineItemContent) -> String {
+    let text = match content.as_msglike().map(|m| &m.kind) {
+        Some(MsgLikeKind::Message(message)) => match message.msgtype() {
+            MessageType::Image(_) => "an image".to_owned(),
+            MessageType::Video(_) => "a video".to_owned(),
+            MessageType::Audio(_) => "an audio file".to_owned(),
+            MessageType::File(_) => "a file".to_owned(),
+            _ => message.body().to_owned(),
+        },
+        Some(MsgLikeKind::Redacted) => "a deleted message".to_owned(),
+        _ => "a message".to_owned(),
+    };
+    shorten(&text.replace('\n', " "), PREVIEW_LENGTH)
+}
+
+/// `text` cut to `max` characters, with "…" if it was longer.
+fn shorten(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_owned(),
     }
 }
 
@@ -304,12 +580,25 @@ mod tests {
     fn lines_serialize_for_the_window() {
         let line = Line::Message {
             id: "1".into(),
+            event_id: Some("$e".into()),
             sender: "@bob:localhost".into(),
             name: "Bob Brown".into(),
             own: false,
-            body: "hi".into(),
+            body: "cat.png".into(),
             html: None,
             emote: false,
+            edited: true,
+            media: Some(Media {
+                kind: MediaKind::Image,
+                name: "cat.png".into(),
+                size: Some(1234),
+                width: Some(640),
+                height: None,
+            }),
+            reply: Some(Reply {
+                name: Some("Alice Anderson".into()),
+                preview: Some("send a cat".into()),
+            }),
             failed: false,
             timestamp: 5,
         };
@@ -323,9 +612,15 @@ mod tests {
                 "op": "insert",
                 "index": 2,
                 "value": {
-                    "type": "message", "id": "1", "sender": "@bob:localhost",
-                    "name": "Bob Brown", "own": false, "body": "hi", "html": null,
-                    "emote": false, "failed": false, "timestamp": 5,
+                    "type": "message", "id": "1", "eventId": "$e",
+                    "sender": "@bob:localhost", "name": "Bob Brown", "own": false,
+                    "body": "cat.png", "html": null, "emote": false, "edited": true,
+                    "media": {
+                        "kind": "image", "name": "cat.png", "size": 1234,
+                        "width": 640, "height": null,
+                    },
+                    "reply": { "name": "Alice Anderson", "preview": "send a cat" },
+                    "failed": false, "timestamp": 5,
                 },
             })
         );
@@ -336,5 +631,14 @@ mod tests {
             .unwrap(),
             serde_json::json!({ "op": "pushFront", "value": { "type": "other", "id": "2" } })
         );
+    }
+
+    #[test]
+    fn previews_are_shortened() {
+        assert_eq!(shorten("short", 10), "short");
+        assert_eq!(shorten("exactly10!", 10), "exactly10!");
+        assert_eq!(shorten("a bit too long", 5), "a bit…");
+        // Counts characters, not bytes.
+        assert_eq!(shorten("héllo wörld", 5), "héllo…");
     }
 }

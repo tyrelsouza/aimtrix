@@ -159,6 +159,7 @@ fn remove_store(store: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{Engine, engine::general_purpose::STANDARD};
 
     const HS: &str = "http://localhost:8008";
     const PASS: &str = "store-passphrase";
@@ -1160,6 +1161,191 @@ mod tests {
 
         list.abort();
         syncing.stop().await;
+        alice.logout().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn images_files_edits_deletions_and_replies_show_up() {
+        use matrix_sdk::{
+            attachment::AttachmentConfig,
+            ruma::{
+                OwnedEventId, RoomId,
+                events::{
+                    relation::{InReplyTo, Reply},
+                    room::message::{Relation, ReplacementMetadata, RoomMessageEventContent},
+                },
+            },
+        };
+        use timeline::{Line, MediaKind};
+
+        let alice_dir = tempfile::tempdir().unwrap();
+        let (alice, alice_sync, alice_list, room_id) =
+            sign_on_to_room(alice_dir.path(), "alice", |b| b.name == "Bob Brown").await;
+        let (mut lines, watching, mut diffs) = watch_lines(&alice, &room_id).await;
+
+        // Bob sends from another client.
+        let bob_dir = tempfile::tempdir().unwrap();
+        let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
+            .await
+            .unwrap();
+        bob.sync_once(matrix_sdk::config::SyncSettings::default())
+            .await
+            .unwrap();
+        let room = bob.get_room(&RoomId::parse(&room_id).unwrap()).unwrap();
+        let tag = rand::random::<u32>();
+        // A 1x1 PNG.
+        let png = STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+            .unwrap();
+        let image_name = format!("cat-{tag}.png");
+        room.send_attachment(&image_name, &mime::IMAGE_PNG, png, AttachmentConfig::new())
+            .await
+            .unwrap();
+        let file_name = format!("notes-{tag}.txt");
+        room.send_attachment(
+            &file_name,
+            &mime::TEXT_PLAIN,
+            b"some notes".to_vec(),
+            AttachmentConfig::new(),
+        )
+        .await
+        .unwrap();
+        let send = |content: RoomMessageEventContent| {
+            let room = room.clone();
+            async move { room.send(content).await.unwrap().response.event_id }
+        };
+        let original: OwnedEventId =
+            send(RoomMessageEventContent::text_plain(format!("typo {tag}"))).await;
+        send(
+            RoomMessageEventContent::text_plain(format!("fixed {tag}"))
+                .make_replacement(ReplacementMetadata::new(original.clone(), None)),
+        )
+        .await;
+        let doomed = send(RoomMessageEventContent::text_plain(format!("oops {tag}"))).await;
+        room.redact(&doomed, None, None).await.unwrap();
+        let mut reply = RoomMessageEventContent::text_plain(format!("answer {tag}"));
+        reply.relates_to = Some(Relation::Reply(Reply::new(InReplyTo::new(
+            original.clone(),
+        ))));
+        send(reply).await;
+        bob.logout().await.unwrap();
+
+        let image = |l: &[Line]| {
+            l.iter().find_map(|line| match line {
+                Line::Message {
+                    media: Some(m),
+                    event_id: Some(id),
+                    ..
+                } if m.kind == MediaKind::Image && m.name == image_name => Some(id.clone()),
+                _ => None,
+            })
+        };
+        wait_for_lines(&mut lines, &mut diffs, "every kind of message", |l| {
+            let file = l.iter().any(|line| {
+                matches!(line, Line::Message { media: Some(m), .. }
+                    if m.kind == MediaKind::File && m.name == file_name)
+            });
+            let edited = l.iter().any(|line| {
+                matches!(line, Line::Message { body, edited: true, .. } if *body == format!("fixed {tag}"))
+            });
+            let deleted = l.iter().any(|line| matches!(line, Line::Deleted { name, .. } if name == "Bob Brown"));
+            let replied = l.iter().any(|line| {
+                matches!(line, Line::Message { body, reply: Some(r), .. }
+                    if *body == format!("answer {tag}")
+                        && r.name.as_deref() == Some("Bob Brown")
+                        && r.preview.as_deref() == Some(format!("fixed {tag}").as_str()))
+            });
+            image(l).is_some() && file && edited && deleted && replied
+        })
+        .await;
+        // The old version is gone, and so is the deleted text.
+        assert!(
+            !lines
+                .iter()
+                .any(|line| matches!(line, Line::Message { body, .. }
+            if *body == format!("typo {tag}") || *body == format!("oops {tag}")))
+        );
+
+        let thumbnail = watching.thumbnail(&image(&lines).unwrap()).await.unwrap();
+        assert!(
+            thumbnail.starts_with("data:image/"),
+            "{}",
+            &thumbnail[..30.min(thumbnail.len())]
+        );
+
+        drop(watching);
+        alice_list.abort();
+        alice_sync.stop().await;
+        alice.logout().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn replies_to_old_messages_load_their_preview() {
+        use matrix_sdk::{
+            room::MessagesOptions,
+            ruma::{
+                RoomId,
+                events::{
+                    AnySyncMessageLikeEvent, AnySyncTimelineEvent, SyncMessageLikeEvent,
+                    relation::{InReplyTo, Reply},
+                    room::message::{Relation, RoomMessageEventContent},
+                },
+                uint,
+            },
+        };
+        use timeline::Line;
+
+        let alice_dir = tempfile::tempdir().unwrap();
+        let (alice, alice_sync, alice_list, room_id) =
+            sign_on_to_room(alice_dir.path(), "alice", |b| b.name == "Test Chat").await;
+
+        // Bob replies to the first backlog message, far older than the
+        // first page a window loads.
+        let bob_dir = tempfile::tempdir().unwrap();
+        let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
+            .await
+            .unwrap();
+        bob.sync_once(matrix_sdk::config::SyncSettings::default())
+            .await
+            .unwrap();
+        let room = bob.get_room(&RoomId::parse(&room_id).unwrap()).unwrap();
+        let mut options = MessagesOptions::backward();
+        options.limit = uint!(200);
+        let first = room
+            .messages(options)
+            .await
+            .unwrap()
+            .chunk
+            .into_iter()
+            .find_map(|event| match event.raw().deserialize() {
+                Ok(AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::RoomMessage(
+                    SyncMessageLikeEvent::Original(m),
+                ))) if m.content.body() == "backlog message 1" => Some(m.event_id),
+                _ => None,
+            })
+            .expect("the seeded backlog");
+        let body = format!("old reply {}", rand::random::<u32>());
+        let mut reply = RoomMessageEventContent::text_plain(&body);
+        reply.relates_to = Some(Relation::Reply(Reply::new(InReplyTo::new(first))));
+        room.send(reply).await.unwrap();
+        bob.logout().await.unwrap();
+
+        let (mut lines, watching, mut diffs) = watch_lines(&alice, &room_id).await;
+        wait_for_lines(&mut lines, &mut diffs, "the reply's preview", |l| {
+            l.iter().any(|line| {
+                matches!(line, Line::Message { body: b, reply: Some(r), .. }
+                    if *b == body
+                        && r.name.as_deref() == Some("Bob Brown")
+                        && r.preview.as_deref() == Some("backlog message 1"))
+            })
+        })
+        .await;
+
+        drop(watching);
+        alice_list.abort();
+        alice_sync.stop().await;
         alice.logout().await.unwrap();
     }
 }

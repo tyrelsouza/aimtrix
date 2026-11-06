@@ -4,7 +4,14 @@
   import { tick } from "svelte";
   import { page } from "$app/state";
   import { watchBuddyList } from "$lib/buddylist";
-  import { describeTyping, watchTimeline, watchTyping, type Line } from "$lib/timeline";
+  import {
+    describeTyping,
+    formatSize,
+    watchTimeline,
+    watchTyping,
+    type Line,
+    type Media,
+  } from "$lib/timeline";
   import { COLORS, mxFormatting, serialize } from "$lib/compose";
   import { DEFAULT_CHAT_ICON, DEFAULT_DM_ICON } from "$lib/icons";
 
@@ -30,7 +37,42 @@
   /** Set once `load_older` says there's no more history. */
   let noMore = $state(false);
 
-  const shown = $derived(lines.filter((l) => l.type === "message" || l.type === "start"));
+  const shown = $derived(lines.filter((l) => l.type !== "other"));
+
+  /** Image thumbnails by event ID; null if it couldn't load. */
+  let thumbnails = $state<Record<string, string | null>>({});
+  const asked = new Set<string>();
+
+  // Load each image's thumbnail once, as its message shows up.
+  $effect(() => {
+    for (const line of shown) {
+      if (line.type !== "message" || line.media?.kind !== "image" || !line.eventId) continue;
+      const eventId = line.eventId;
+      if (asked.has(eventId)) continue;
+      asked.add(eventId);
+      invoke<string>("image_thumbnail", { roomId, eventId })
+        .then((url) => (thumbnails[eventId] = url))
+        .catch((e) => {
+          console.warn("Couldn't load an image:", e);
+          thumbnails[eventId] = null;
+        });
+    }
+  });
+
+  /** Following the newest message, i.e. scrolled to the bottom. */
+  let pinned = true;
+
+  /** A thumbnail loaded and grew its message: stay at the bottom if there. */
+  function imageLoaded() {
+    if (pinned) transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  const MEDIA_ICONS: Record<Media["kind"], string> = {
+    image: "🖼",
+    video: "🎞",
+    audio: "🔊",
+    file: "📎",
+  };
   const atStart = $derived(noMore || lines.some((l) => l.type === "start"));
 
   let kind = $state<"dm" | "group">("dm");
@@ -153,6 +195,7 @@
 
   /** Load older messages when you scroll near the top. */
   function scrolled() {
+    pinned = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 8;
     if (transcript.scrollTop < 40) loadOlder();
   }
 
@@ -264,10 +307,42 @@
         {#each shown as line (line.id)}
           {#if line.type === "start"}
             <p class="aim-msg aim-msg--system">This is the beginning of the conversation.</p>
+          {:else if line.type === "deleted"}
+            <div class="aim-msg" title={time(line.timestamp)}>
+              <span class="aim-msg__name" class:aim-msg__name--self={line.own} class:aim-msg__name--buddy={!line.own}>{line.name}:</span>
+              <span class="aim-msg__note">(message deleted)</span>
+            </div>
           {:else if line.type === "message"}
-            <!-- One line: plain messages keep whitespace, so markup spacing would show.
-                 The HTML was cleaned by the Rust core. -->
-            <div class="aim-msg" title={time(line.timestamp)}><span class="aim-msg__name" class:aim-msg__name--self={line.own} class:aim-msg__name--buddy={!line.own}>{line.emote ? `* ${line.name}` : `${line.name}:`}</span> {#if line.html}<span class="aim-msg__html" use:mxFormatting={line.html}>{@html line.html}</span>{:else}<span class="aim-msg__text">{line.body}</span>{/if}{#if line.failed}<span class="aim-msg__note"> (not sent)</span>{/if}</div>
+            <div class="aim-msg" title={time(line.timestamp)}>
+              {#if line.reply}
+                <div class="aim-msg__reply">
+                  {#if line.reply.name}
+                    In reply to <b>{line.reply.name}</b>: {line.reply.preview}
+                  {:else}
+                    In reply to a message
+                  {/if}
+                </div>
+              {/if}
+              <!-- The HTML was cleaned by the Rust core. -->
+              <span class="aim-msg__name" class:aim-msg__name--self={line.own} class:aim-msg__name--buddy={!line.own}>{line.emote ? `* ${line.name}` : `${line.name}:`}</span>
+              {#if line.media}
+                {@const media = line.media}
+                {@const thumbnail = line.eventId ? thumbnails[line.eventId] : undefined}
+                {#if media.kind === "image" && thumbnail}
+                  <img
+                    class="aim-msg__image"
+                    src={thumbnail}
+                    alt={media.name}
+                    title={media.name}
+                    style:aspect-ratio={media.width && media.height ? `${media.width} / ${media.height}` : undefined}
+                    onload={imageLoaded}
+                  />
+                {:else}
+                  <span class="aim-msg__file">{MEDIA_ICONS[media.kind]} {media.name}{#if media.size !== null}<span class="aim-msg__note"> ({formatSize(media.size)})</span>{/if}</span>
+                {/if}
+              {/if}
+              {#if !line.media || line.body !== line.media.name}{#if line.html}<span class="aim-msg__html" use:mxFormatting={line.html}>{@html line.html}</span>{:else}<span class="aim-msg__text">{line.body}</span>{/if}{/if}{#if line.edited}<span class="aim-msg__note"> (edited)</span>{/if}{#if line.failed}<span class="aim-msg__note"> (not sent)</span>{/if}
+            </div>
           {/if}
         {/each}
       </div>

@@ -191,6 +191,17 @@ pub async fn my_icon(session: State<'_, Session>) -> Result<Option<String>, Stri
         .map_err(|e| format!("Couldn't fetch your Buddy Icon: {e}"))
 }
 
+/// The thumbnail of an image message in a room's IM window, as a `data:`
+/// URL.
+#[tauri::command]
+pub async fn image_thumbnail(
+    app: AppHandle,
+    room_id: String,
+    event_id: String,
+) -> Result<String, String> {
+    session::thumbnail(&app, &room_id, &event_id).await
+}
+
 /// The signed-on client. Cloned so the session isn't locked while it's used.
 async fn client(session: &Session) -> Result<Client, String> {
     let signed = session.signed.lock().await;

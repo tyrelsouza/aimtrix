@@ -91,7 +91,8 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 - [x] **3.5 Typing.** Send typing notices and show "Name is typing…" in the status bar. *Done when:* it works in both directions with Element.
 - [x] **3.6 Formatting.** Add a B/I/U and font-color toolbar that sends `formatted_body`, and render incoming HTML safely (sanitized). *Done when:* formatting survives a round trip with Element, and a `<script>` tag gets stripped.
 - [x] **3.7 Buddy icon pane and read receipts.** Show the buddy icon pane and mark the room read when the window has focus. *Done when:* the bold in the Buddy List clears after reading.
-- [ ] **3.8 Other message types.** Handle images (thumbnails), files, edits, deletions (redactions) and basic replies. *Done when:* each type sent from Element shows up sensibly.
+- [x] **3.8 Other message types.** Handle images (thumbnails), files, edits, deletions (redactions) and basic replies. *Done when:* each type sent from Element shows up sensibly.
+- [ ] **3.9 Save attachments.** Clicking a file or image in an IM window opens a Save dialog and saves it there, decrypted in encrypted rooms. *Done when:* a file and an image sent from Element can be saved and opened.
 
 ### Phase 4: Chat Room window
 - [ ] **4.1 Chat Room window.** Reuse the timeline component in a Chat Room layout for group rooms. *Done when:* a group opens as a Chat Room and a DM opens as an IM.
@@ -129,7 +130,10 @@ Not tied to a step. Tick or remove them as they're dealt with.
 - [ ] **Buddy List may miss tag and `m.direct` changes.** Suspected, untested: adding or removing `aimtrix.chat`, or an `m.direct` change, may not move the room until something else in it changes.
 - [ ] **Recheck the SDK stop workaround when upgrading matrix-sdk.** In 0.19 a `SyncService::stop()` right after `start()` can lose the stop request and hang forever. `Syncing::stop` in `src-tauri/src/matrix/sync.rs` repeats the request every 100 ms. Drop the workaround once the SDK fixes this.
 - [ ] **Script text shows in messages.** An incoming `<script>` tag is stripped, but its text (e.g. `alert(1)`) shows as plain text: matrix-sdk-ui's own cleaner drops the tag and keeps the text before ours runs. Harmless. To drop it, clean the raw event's `formatted_body` ourselves (`latest_json()`), minding edits and local echoes.
+- [ ] **No full-size image viewer.** Images show a thumbnail; 3.9 makes them savable, but there's no way to view one full size in the app.
+- [ ] **Videos and audio show as files.** No thumbnail or player yet.
 - [ ] **Links in messages don't open.** Clicking one does nothing (so it can't navigate the window away). Open them in the browser with the Tauri opener plugin.
+- [ ] **`formatting_round_trips_and_scripts_are_stripped` failed once** in a full parallel run (during 3.8), then passed alone twice and in three full runs. The failing wait wasn't captured. Suspect: several tests share Bob's DM at once. If it recurs, note which wait timed out; giving each test its own room would rule it out.
 - **Killed test runs leave debris.** A test stopped before its cleanup leaves rooms and invites on the test accounts, and tests that look rooms up by name can then pick the wrong one. Find rooms by ID where possible, and clean up the accounts after killing a run.
 - **Dev server rate limits.** Synapse's newer `rc_room_creation` limit made room-creating tests stall for minutes. `dev/synapse/homeserver.yaml` now relaxes it with the other limits; relax any new limit Synapse adds the same way.
 

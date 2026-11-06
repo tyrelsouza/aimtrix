@@ -7,6 +7,8 @@ export type Line =
   | {
       type: "message";
       id: string;
+      /** Null until the server has it (yours, while sending). */
+      eventId: string | null;
       sender: string;
       name: string;
       own: boolean;
@@ -15,14 +17,46 @@ export type Line =
       /** Formatted text, already cleaned by the Rust core, or null. */
       html: string | null;
       emote: boolean;
+      /** Changed after sending; `body` and `html` are the latest version. */
+      edited: boolean;
+      /** An image or file; `body` is then its caption, or its name. */
+      media: Media | null;
+      /** The message this one answers. */
+      reply: Reply | null;
       /** Ours, and the server didn't take it. */
       failed: boolean;
       /** Milliseconds since the Unix epoch. */
       timestamp: number;
     }
+  /** A deleted message. */
+  | { type: "deleted"; id: string; name: string; own: boolean; timestamp: number }
   /** The room's first event is loaded: there's no more history. */
   | { type: "start"; id: string }
   | { type: "other"; id: string };
+
+/** Mirrors `Media` in src-tauri/src/matrix/timeline.rs. */
+export type Media = {
+  kind: "image" | "video" | "audio" | "file";
+  name: string;
+  /** Bytes, if the sender said. */
+  size: number | null;
+  width: number | null;
+  height: number | null;
+};
+
+/** Mirrors `Reply` in src-tauri/src/matrix/timeline.rs. */
+export type Reply = {
+  /** Null until the replied-to message is loaded. */
+  name: string | null;
+  preview: string | null;
+};
+
+/** "12 KB", "3.4 MB". */
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 /** Mirrors `Diff` in src-tauri/src/matrix/timeline.rs. */
 type Diff =

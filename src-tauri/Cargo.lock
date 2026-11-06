@@ -62,6 +62,7 @@ dependencies = [
  "keyring",
  "matrix-sdk",
  "matrix-sdk-ui",
+ "mime",
  "rand 0.10.3",
  "serde",
  "serde_json",

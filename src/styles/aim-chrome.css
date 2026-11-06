@@ -492,6 +492,35 @@ button.aim-list__item:focus-visible {
   font-style: italic;
 }
 
+/* What a reply answers, above it. */
+.aim-msg__reply {
+  margin-left: 8px;
+  padding-left: 4px;
+  border-left: 2px solid var(--c-shadow);
+  color: var(--c-im-system);
+  font-size: 11px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* An image message's thumbnail, on its own line under the name. */
+.aim-msg__image {
+  display: block;
+  max-width: min(240px, 100%);
+  max-height: 180px;
+  margin: 2px 0;
+  box-shadow: var(--bevel-thin-sunken);
+}
+
+/* A file, video or audio attachment. */
+.aim-msg__file {
+  display: inline-block;
+  padding: 0 4px;
+  background: var(--c-face);
+  box-shadow: var(--bevel-thin-raised);
+}
+
 /* Formatted message text. Block tags from other clients stay compact. */
 .aim-msg__html :is(p, blockquote, pre, ul, ol, h1, h2, h3, h4, h5, h6) {
   margin: 0;

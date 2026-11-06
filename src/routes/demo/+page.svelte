@@ -134,6 +134,10 @@
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <span class="aim-msg__html">nice, this is <b>bold</b> and <span style="color: #ff0000">red</span>, a <a href="https://example.org">link</a>, <code>code</code> and a <span data-mx-spoiler="">spoiler</span></span></p>
           <div class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <span class="aim-msg__html"><blockquote>a quote from another client</blockquote>and the reply</span></div>
           <p class="aim-msg aim-msg--undecryptable"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> 🔒 Unable to decrypt this message yet.</p>
+          <div class="aim-msg"><div class="aim-msg__reply">In reply to <b>Alice Anderson</b>: see you at 5?</div><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> sounds good<span class="aim-msg__note"> (edited)</span></div>
+          <div class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span><img class="aim-msg__image" src={bob} alt="cat.png" style="width: 80px" /></div>
+          <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <span class="aim-msg__file">📎 notes.txt<span class="aim-msg__note"> (12 KB)</span></span></p>
+          <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <span class="aim-msg__note">(message deleted)</span></p>
           <p class="aim-msg aim-msg--system">Bob Brown is away: "grabbing lunch"</p>
         </div>
         <img class="aim-buddy-icon" src={bob} alt="Bob's buddy icon" />

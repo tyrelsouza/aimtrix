@@ -130,6 +130,11 @@ pub async fn mark_read(app: &AppHandle, room_id: &str) -> Result<(), String> {
     watching(app, room_id)?.mark_read().await
 }
 
+/// An image's thumbnail, in a room whose window is open.
+pub async fn thumbnail(app: &AppHandle, room_id: &str, event_id: &str) -> Result<String, String> {
+    watching(app, room_id)?.thumbnail(event_id).await
+}
+
 /// Load older history in a room whose window is open. Returns whether the
 /// start of the room was reached.
 pub async fn load_older(app: &AppHandle, room_id: &str) -> Result<bool, String> {
