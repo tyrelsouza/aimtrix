@@ -1,12 +1,15 @@
 <!-- Buddy List placeholder until step 2.2. -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { describe, watchSyncStatus, type SyncStatus } from "$lib/sync";
 
   let userId = $state<string | null>(null);
+  let status = $state<SyncStatus>({ state: "connecting" });
   let busy = $state(false);
   let error = $state("");
 
   invoke<string | null>("whoami").then((id) => (userId = id));
+  $effect(() => watchSyncStatus((s) => (status = s)));
 
   async function signOff() {
     busy = true;
@@ -21,20 +24,36 @@
   }
 </script>
 
-<main class="aim-window__body">
-  <p>Signed on as {userId ?? "…"}</p>
-  {#if error}
-    <p class="aim-alert" role="alert">{error}</p>
-  {/if}
-  <div>
-    <button class="aim-btn" onclick={signOff} disabled={busy}>Sign Off</button>
-  </div>
-  {#if import.meta.env.DEV}
-    <p><a href="/demo">Style demo</a></p>
-  {/if}
-</main>
+<div class="layout">
+  <main class="aim-window__body">
+    <p>Signed on as {userId ?? "…"}</p>
+    {#if error}
+      <p class="aim-alert" role="alert">{error}</p>
+    {/if}
+    <div>
+      <button class="aim-btn" onclick={signOff} disabled={busy}>Sign Off</button>
+    </div>
+    {#if import.meta.env.DEV}
+      <p><a href="/demo">Style demo</a></p>
+    {/if}
+  </main>
+  <footer class="aim-statusbar">
+    <span
+      class="aim-statusbar__section"
+      role="status"
+      title={status.state === "error" ? status.message : undefined}
+    >
+      {describe(status)}
+    </span>
+  </footer>
+</div>
 
 <style>
+  .layout {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
   p {
     margin: 0;
   }

@@ -1,6 +1,7 @@
 //! The single Matrix session owned by the Rust core: sign on, resume, sign off.
 
 mod keyring;
+pub mod sync;
 
 use std::{
     io,
@@ -13,9 +14,19 @@ use tauri::async_runtime::{Mutex, spawn_blocking};
 
 use keyring::SavedSession;
 
-/// The signed-on client, shared by every window. `None` until sign-on.
+/// App-wide session state, shared by every window.
 #[derive(Default)]
-pub struct Session(pub Mutex<Option<Client>>);
+pub struct Session {
+    /// The signed-on client and its sync. `None` until sign-on.
+    pub signed: Mutex<Option<Signed>>,
+    /// The latest connection status, for windows that open after it changed.
+    pub status: std::sync::Mutex<sync::Status>,
+}
+
+pub struct Signed {
+    pub client: Client,
+    pub sync: sync::Syncing,
+}
 
 fn store_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("matrix-store")
@@ -177,6 +188,56 @@ mod tests {
         // A real server round trip proves the restored token works.
         assert_eq!(client.whoami().await.unwrap().user_id, "@bob:localhost");
         client.logout().await.unwrap();
+    }
+
+    /// Wait up to 20 s for `want` to arrive on `rx`.
+    async fn wait_for(rx: &mut tokio::sync::mpsc::UnboundedReceiver<sync::Status>, want: sync::Status) {
+        let found = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            while let Some(status) = rx.recv().await {
+                if status == want {
+                    return;
+                }
+            }
+            panic!("status stream ended before {want:?}");
+        });
+        found.await.unwrap_or_else(|_| panic!("timed out waiting for {want:?}"));
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn sync_goes_online() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = login(dir.path(), PASS, HS, "carol", "aimtrix-test").await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let syncing = sync::start(&client, move |s| tx.send(s).unwrap()).await.unwrap();
+
+        wait_for(&mut rx, sync::Status::Connecting).await;
+        wait_for(&mut rx, sync::Status::Online).await;
+
+        syncing.stop().await;
+        client.logout().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn sync_reports_revoked_token_as_signed_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = login(dir.path(), PASS, HS, "carol", "aimtrix-test").await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let syncing = sync::start(&client, move |s| tx.send(s).unwrap()).await.unwrap();
+        wait_for(&mut rx, sync::Status::Online).await;
+
+        // Revoke the token from "another client" sharing the same session.
+        let other_dir = tempfile::tempdir().unwrap();
+        let saved = SavedSession {
+            homeserver: client.homeserver().to_string(),
+            store_passphrase: PASS.to_owned(),
+            session: client.matrix_auth().session().unwrap(),
+        };
+        restore(other_dir.path(), &saved).await.unwrap().logout().await.unwrap();
+
+        wait_for(&mut rx, sync::Status::SignedOut).await;
+        syncing.stop().await;
     }
 
     #[test]

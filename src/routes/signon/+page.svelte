@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { page } from "$app/state";
   import { tick } from "svelte";
 
   // The dev homeserver from dev/docker-compose.yml, so testing is one less field.
@@ -7,7 +8,10 @@
   let username = $state("");
   let password = $state("");
   let busy = $state(false);
-  let error = $state("");
+  // Set when the server ended the session (e.g. signed out from another client).
+  let error = $state(
+    page.url.searchParams.has("signed-out") ? "You were signed out. Please sign on again." : "",
+  );
   let passwordInput: HTMLInputElement;
 
   async function signOn(event: SubmitEvent) {

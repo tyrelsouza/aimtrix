@@ -16,11 +16,13 @@ pub fn open_buddy_list(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-pub fn open_sign_on(app: &AppHandle) -> tauri::Result<()> {
+/// `signed_out` makes Sign On explain that the server ended the session.
+pub fn open_sign_on(app: &AppHandle, signed_out: bool) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("signon") {
         return window.set_focus();
     }
-    WebviewWindowBuilder::new(app, "signon", WebviewUrl::App("/signon".into()))
+    let url = if signed_out { "/signon?signed-out" } else { "/signon" };
+    WebviewWindowBuilder::new(app, "signon", WebviewUrl::App(url.into()))
         .title("Sign On")
         .inner_size(250.0, 300.0)
         .resizable(false)
