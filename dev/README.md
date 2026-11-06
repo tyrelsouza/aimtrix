@@ -28,4 +28,6 @@ Alice and Bob have solid-color avatars. Carol has none, to test the default Budd
 
 The seed script can't send encrypted messages (it has no crypto). To get encrypted history, send messages in those rooms from Element Web.
 
+**Recovery (key backup):** the Rust tests give bob recovery with the passphrase `bob test recovery passphrase`, resetting his cross-signing identity the first time. Leave bob's recovery to the tests. To try Restore Messages by hand, set up recovery for alice in Element (Settings → Encryption → Set up recovery) and keep the key it shows.
+
 **Dev only:** the secrets in `synapse/homeserver.yaml` are public and rate limits are effectively off. Ports are bound to `127.0.0.1`.

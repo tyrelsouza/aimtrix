@@ -2,12 +2,14 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { describe, watchSyncStatus, type SyncStatus } from "$lib/sync";
+  import { watchRecovery, type Recovery } from "$lib/recovery";
   import { SECTIONS, watchBuddyList, type Buddy } from "$lib/buddylist";
   import { DEFAULT_CHAT_ICON, DEFAULT_DM_ICON } from "$lib/icons";
 
   let userId = $state<string | null>(null);
   let status = $state<SyncStatus>({ state: "connecting" });
   let buddies = $state<Buddy[]>([]);
+  let recovery = $state<Recovery>("unknown");
   let selected = $state<string | null>(null);
   /** Invitations being accepted or declined. */
   let responding = $state<string[]>([]);
@@ -17,6 +19,7 @@
   invoke<string | null>("whoami").then((id) => (userId = id));
   $effect(() => watchSyncStatus((s) => (status = s)));
   $effect(() => watchBuddyList((b) => (buddies = b)));
+  $effect(() => watchRecovery((r) => (recovery = r)));
 
   // Invitations only show up when there are some.
   const groups = $derived(
@@ -117,6 +120,12 @@
     {#if error}
       <p class="aim-alert" role="alert">{error}</p>
     {/if}
+    {#if recovery === "incomplete"}
+      <p class="restore">
+        🔒 Older messages are locked.
+        <button class="aim-btn aim-btn--small" onclick={() => invoke("open_recovery")}>Restore…</button>
+      </p>
+    {/if}
     <div class="buttons">
       <button class="aim-btn" onclick={signOff} disabled={busy}>Sign Off</button>
       {#if import.meta.env.DEV}
@@ -150,6 +159,12 @@
     gap: 4px;
     /* Line up with the room name, past the icon. */
     padding: 1px 0 3px 38px;
+  }
+  .restore {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
   }
   .buttons {
     display: flex;

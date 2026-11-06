@@ -37,6 +37,25 @@ pub fn open_sign_on(app: &AppHandle, signed_out: bool) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Label of the Restore Messages window.
+pub const RECOVERY_LABEL: &str = "recovery";
+
+/// Restore Messages: asks for the recovery key so this device can read old
+/// encrypted messages.
+pub fn open_recovery(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(RECOVERY_LABEL) {
+        window.unminimize()?;
+        return window.set_focus();
+    }
+    WebviewWindowBuilder::new(app, RECOVERY_LABEL, WebviewUrl::App("/recovery".into()))
+        .title("Restore Messages")
+        .inner_size(340.0, 250.0)
+        .resizable(false)
+        .center()
+        .build()?;
+    Ok(())
+}
+
 /// Open the window for `room_id`: an IM for a DM, a Chat Room for a group.
 /// There's one window per room; opening it again focuses it.
 pub fn open_room(app: &AppHandle, room_id: &str, name: &str, kind: Kind) -> tauri::Result<()> {

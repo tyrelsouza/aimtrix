@@ -43,7 +43,10 @@ pub fn run() {
             commands::my_icon,
             commands::room_icon,
             commands::image_thumbnail,
-            commands::save_attachment
+            commands::save_attachment,
+            commands::recovery_status,
+            commands::open_recovery,
+            commands::recover
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

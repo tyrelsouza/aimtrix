@@ -11,6 +11,12 @@ What changed in each phase of `PLAN.md`, step by step. Open problems live under 
   - `timeline.rs` has a new `Undecryptable` line with an `UndecryptableReason` taken from the SDK's `UtdCause`. Retrying is left to matrix-sdk, which decrypts again whenever new keys arrive.
   - `matrix-sdk-crypto` is now a direct dependency (same 0.19.1 already in the build), since `UtdCause` isn't re-exported by `matrix-sdk`.
   - New server test `undecryptable_messages_turn_into_text_when_keys_arrive`: a second Alice device sees the placeholder for Carol's message, then imports room keys exported from the first device and the placeholder becomes the text.
+- **5.3 Recovery key.** A Restore Messages window asks for your recovery key or passphrase when the account has recovery set up but this computer doesn't have its keys yet. It opens by itself after sign-on (or when recovery is set up elsewhere mid-session), and the Buddy List shows "🔒 Older messages are locked. [Restore…]" until it's done. Once restored, keys for old messages download from the key backup and their placeholders turn into text. A wrong key says so; extra spaces are ignored; the key is never logged and is cleared from the window after use.
+  - New `matrix/crypto.rs`: recovery state (`recovery:status` event, `recovery_status` command), `recover` with friendly errors, and `open_recovery`. Clients now download all backed-up room keys as soon as recovery unlocks them (`BackupDownloadStrategy::OneShot`).
+  - The 5.2 placeholder now uses the existing `.aim-msg--undecryptable` style with a 🔒. `/demo` shows the Restore Messages window and the Buddy List row.
+  - Dev builds optimize the hash crates (`sha2`, `hmac`, `pbkdf2`): recovery passphrases take ~2 s instead of ~10 s each.
+  - New server test `recovery_key_lets_a_new_device_read_old_messages`, using bob with a fixed test passphrase (see `dev/README.md`). Found that resetting the identity while syncing loses the new cross-signing keys; logged for 5.5.
+  - Fix: Close and Not Now did nothing, because the `recovery` window was missing from `capabilities/default.json` (no events, no closing). It's now listed, and windows may close themselves (`core:window:allow-close`).
 
 ## Phase 4: Chat Room window
 

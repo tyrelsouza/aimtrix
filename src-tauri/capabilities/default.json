@@ -5,9 +5,11 @@
   "windows": [
     "signon",
     "main",
-    "room-*"
+    "room-*",
+    "recovery"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:window:allow-close"
   ]
 }

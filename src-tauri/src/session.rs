@@ -2,7 +2,10 @@
 //! broadcasts connection status and the Buddy List to windows, and handles a
 //! revoked token.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use matrix_sdk::{
     Client,
@@ -13,6 +16,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::{
     matrix::{
         self, Session, Signed,
+        crypto::{self, Recovery},
         members::{self, ChatRoom},
         rooms::{self, Buddy},
         sync::{self, Status},
@@ -25,6 +29,8 @@ use crate::{
 pub const STATUS_EVENT: &str = "sync:status";
 /// Event carrying the whole Buddy List (`Vec<Buddy>`) to every window.
 pub const BUDDY_LIST_EVENT: &str = "buddylist:update";
+/// Event carrying the new [`Recovery`] state to every window.
+pub const RECOVERY_EVENT: &str = "recovery:status";
 
 /// Start syncing `client` and make it the app's session.
 pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
@@ -37,10 +43,17 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
         let app = app.clone();
         move |buddies| on_buddies(&app, buddies)
     });
+    // Ask for the recovery key once per sign-on, not on every change.
+    let asked = Arc::new(AtomicBool::new(false));
+    let recovery = crypto::watch(&client, {
+        let app = app.clone();
+        move |state| on_recovery(&app, state, &asked)
+    });
     *app.state::<Session>().signed.lock().await = Some(Signed {
         client,
         sync,
         buddy_list,
+        recovery,
     });
     Ok(())
 }
@@ -49,13 +62,15 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
 pub async fn end(app: &AppHandle) -> Option<Client> {
     let signed = app.state::<Session>().signed.lock().await.take()?;
     signed.buddy_list.abort();
+    signed.recovery.abort();
     signed.sync.stop().await;
+    *app.state::<Session>().recovery.lock().unwrap() = Recovery::Unknown;
     app.state::<Session>().buddies.lock().unwrap().clear();
     // Dropping each watch stops it.
     app.state::<Session>().timelines.lock().unwrap().clear();
     app.state::<Session>().members.lock().unwrap().clear();
     for (label, window) in app.webview_windows() {
-        if label.starts_with(windows::ROOM_LABEL_PREFIX) {
+        if label.starts_with(windows::ROOM_LABEL_PREFIX) || label == windows::RECOVERY_LABEL {
             let _ = window.close();
         }
     }
@@ -287,5 +302,20 @@ async fn signed_out(app: &AppHandle) {
     }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.close();
+    }
+}
+
+/// Share the new recovery state, and open Restore Messages the first time
+/// this device turns out to need the recovery key.
+fn on_recovery(app: &AppHandle, state: Recovery, asked: &AtomicBool) {
+    *app.state::<Session>().recovery.lock().unwrap() = state;
+    if let Err(e) = app.emit(RECOVERY_EVENT, state) {
+        eprintln!("Couldn't send the recovery state to windows: {e}");
+    }
+    if state == Recovery::Incomplete
+        && !asked.swap(true, Ordering::Relaxed)
+        && let Err(e) = windows::open_recovery(app)
+    {
+        eprintln!("Couldn't open Restore Messages: {e}");
     }
 }

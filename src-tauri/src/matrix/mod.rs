@@ -1,5 +1,6 @@
 //! The single Matrix session owned by the Rust core: sign on, resume, sign off.
 
+pub mod crypto;
 mod html;
 mod keyring;
 pub mod media;
@@ -33,12 +34,16 @@ pub struct Session {
     pub timelines: std::sync::Mutex<HashMap<String, std::sync::Arc<timeline::Watching>>>,
     /// Who's in each open Chat Room, by room ID.
     pub members: std::sync::Mutex<HashMap<String, members::Watching>>,
+    /// Whether this device can read old messages, for windows that open
+    /// after it changed.
+    pub recovery: std::sync::Mutex<crypto::Recovery>,
 }
 
 pub struct Signed {
     pub client: Client,
     pub sync: sync::Syncing,
     pub buddy_list: tauri::async_runtime::JoinHandle<()>,
+    pub recovery: tauri::async_runtime::JoinHandle<()>,
 }
 
 fn store_dir(data_dir: &Path) -> PathBuf {
@@ -115,6 +120,7 @@ async fn login(
     let client = Client::builder()
         .server_name_or_homeserver_url(homeserver)
         .sqlite_store(store, Some(passphrase))
+        .with_encryption_settings(crypto::settings())
         .build()
         .await
         .map_err(|e| format!("Couldn't reach homeserver: {e}"))?;
@@ -138,6 +144,7 @@ async fn restore(store: &Path, saved: &SavedSession) -> Result<Client, String> {
     let client = Client::builder()
         .homeserver_url(&saved.homeserver)
         .sqlite_store(store, Some(&saved.store_passphrase))
+        .with_encryption_settings(crypto::settings())
         .build()
         .await
         .map_err(|e| format!("Couldn't open the session store: {e}"))?;
@@ -1740,6 +1747,173 @@ mod tests {
             (first_watch, first_list, first_sync, first),
             (second_watch, second_list, second_sync, second),
             (carol_watch, carol_list, carol_sync, carol),
+        ] {
+            drop(watching);
+            list.abort();
+            syncing.stop().await;
+            client.logout().await.unwrap();
+        }
+    }
+
+    /// Wait for `client`'s recovery state to be `want`; panic after 20 s.
+    async fn wait_for_recovery(client: &Client, what: &str, want: crypto::Recovery) {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let task = crypto::watch(client, move |state| {
+            let _ = tx.send(state);
+        });
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut last = None;
+        loop {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(state)) if state == want => break,
+                Ok(Some(state)) => last = Some(state),
+                _ => panic!(
+                    "timed out waiting for {what} to be {want:?}; last {last:?}; cross-signing {:?}, backups enabled {:?} ({:?})",
+                    client.encryption().cross_signing_status().await,
+                    client.encryption().backups().are_enabled().await,
+                    client.encryption().backups().state(),
+                ),
+            }
+        }
+        task.abort();
+    }
+
+    /// Bob's recovery passphrase, set up by the first run of
+    /// [`recovery_key_lets_a_new_device_read_old_messages`] and kept after.
+    const BOB_RECOVERY: &str = "bob test recovery passphrase";
+
+    /// Make sure bob's account has recovery with [`BOB_RECOVERY`], setting
+    /// it up (with a new identity, since recovery needs cross-signing) if it
+    /// has none or an earlier run left it half done.
+    ///
+    /// Runs on its own sign-on with no sync: while syncing, the SDK can see
+    /// the old identity on the server between making new cross-signing keys
+    /// and uploading them, and throws the new private keys away.
+    async fn ensure_bob_recovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = login(dir.path(), PASS, HS, "bob", "aimtrix-test")
+            .await
+            .unwrap();
+        client
+            .encryption()
+            .wait_for_e2ee_initialization_tasks()
+            .await;
+        let recovered = crypto::recover(&client, BOB_RECOVERY).await.is_ok()
+            && has_cross_signing(&client).await;
+        if !recovered {
+            let recovery = client.encryption().recovery();
+            if let Some(reset) = recovery.reset_identity().await.unwrap() {
+                let matrix_sdk::encryption::CrossSigningResetAuthType::Uiaa(uiaa) =
+                    reset.auth_type()
+                else {
+                    panic!("the dev homeserver asks for a password");
+                };
+                use matrix_sdk::ruma::api::client::uiaa::{
+                    AuthData, MatrixUserIdentifier, Password,
+                };
+                let mut password = Password::new(
+                    MatrixUserIdentifier::new("bob".to_owned()).into(),
+                    "aimtrix-test".to_owned(),
+                );
+                password.session = uiaa.session.clone();
+                reset
+                    .reset(Some(AuthData::Password(password)))
+                    .await
+                    .unwrap();
+            }
+            assert!(
+                has_cross_signing(&client).await,
+                "the reset kept the cross-signing keys"
+            );
+            recovery
+                .enable()
+                .with_passphrase(BOB_RECOVERY)
+                .await
+                .unwrap();
+        }
+        client.logout().await.unwrap();
+    }
+
+    /// Whether `client` holds all of its account's private cross-signing keys.
+    async fn has_cross_signing(client: &Client) -> bool {
+        client
+            .encryption()
+            .cross_signing_status()
+            .await
+            .is_some_and(|s| s.is_complete())
+    }
+
+    /// Uses bob, not alice, so it can't break a recovery key made for alice
+    /// in Element. The first run sets up bob's recovery with
+    /// [`BOB_RECOVERY`] (see [`ensure_bob_recovery`]); later runs reuse it.
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn recovery_key_lets_a_new_device_read_old_messages() {
+        // Bob's first device has recovery and backs up a message's key.
+        ensure_bob_recovery().await;
+        let first_dir = tempfile::tempdir().unwrap();
+        let (first, first_sync, first_list, room_id) =
+            sign_on_to_seed_room(first_dir.path(), "bob", "group-e2ee", "Secret Chat").await;
+        wait_for_recovery(
+            &first,
+            "recovery on the first device",
+            crypto::Recovery::Incomplete,
+        )
+        .await;
+        crypto::recover(&first, BOB_RECOVERY).await.unwrap();
+        let (mut first_lines, first_watch, mut first_diffs) = watch_lines(&first, &room_id).await;
+        let body = format!("recovery test {}", rand::random::<u32>());
+        send_as("alice", &room_id, &body).await;
+        wait_for_lines(&mut first_lines, &mut first_diffs, "Alice's message", |l| {
+            said(l, "Alice Anderson", &body, false)
+        })
+        .await;
+        first
+            .encryption()
+            .backups()
+            .wait_for_steady_state()
+            .await
+            .unwrap();
+
+        // A new device can't read it…
+        let second_dir = tempfile::tempdir().unwrap();
+        let (second, second_sync, second_list, _) =
+            sign_on_to_seed_room(second_dir.path(), "bob", "group-e2ee", "Secret Chat").await;
+        let (mut lines, second_watch, mut diffs) = watch_lines(&second, &room_id).await;
+        wait_for_lines(&mut lines, &mut diffs, "the placeholder", |l| {
+            l.iter().any(|line| {
+                matches!(line, timeline::Line::Undecryptable { name, .. } if name == "Alice Anderson")
+            }) && !said(l, "Alice Anderson", &body, false)
+        })
+        .await;
+        wait_for_recovery(
+            &second,
+            "recovery before the key",
+            crypto::Recovery::Incomplete,
+        )
+        .await;
+
+        // …until it's given the passphrase, pasted with stray whitespace.
+        assert_eq!(
+            crypto::recover(
+                &second,
+                "EsTj 3yST y93F SLpB jJsz eAXc 2XzA ygD3 w69H fGaN TKBj jXEd"
+            )
+            .await,
+            Err("That recovery key or passphrase isn't right.".to_owned())
+        );
+        crypto::recover(&second, &format!("  {BOB_RECOVERY}\n"))
+            .await
+            .unwrap();
+        wait_for_recovery(&second, "recovery after the key", crypto::Recovery::Enabled).await;
+        wait_for_lines(&mut lines, &mut diffs, "the restored message", |l| {
+            said(l, "Alice Anderson", &body, false)
+        })
+        .await;
+
+        for (watching, list, syncing, client) in [
+            (first_watch, first_list, first_sync, first),
+            (second_watch, second_list, second_sync, second),
         ] {
             drop(watching);
             list.abort();

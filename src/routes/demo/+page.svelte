@@ -101,6 +101,10 @@
           </ul>
         </details>
       </div>
+      <div class="row" style="justify-content: space-between; align-items: center; gap: 4px">
+        🔒 Older messages are locked.
+        <button class="aim-btn aim-btn--small">Restore…</button>
+      </div>
       <div class="row center">
         <button class="aim-btn" style="min-width: 0">IM</button>
         <button class="aim-btn" style="min-width: 0">Chat</button>
@@ -110,6 +114,32 @@
     <div class="aim-statusbar">
       <span class="aim-statusbar__section">Online</span>
       <span class="aim-statusbar__section aim-statusbar__section--fit">localhost</span>
+    </div>
+  </section>
+
+  <!-- Restore Messages -->
+  <section class="aim-window" style="width: 300px">
+    <div class="aim-titlebar">
+      <img class="aim-titlebar__icon" src={appIcon} alt="" />
+      <span class="aim-titlebar__title">Restore Messages</span>
+      <div class="aim-titlebar__controls">
+        <button class="aim-titlebar__btn aim-titlebar__btn--close" aria-label="Close"></button>
+      </div>
+    </div>
+    <div class="aim-window__body">
+      <p style="margin: 0">🔒 This computer can't read your older encrypted messages yet.</p>
+      <fieldset class="aim-groupbox">
+        <legend>Recovery key</legend>
+        <label class="aim-label">
+          Enter the recovery key or passphrase you saved when you set up recovery (for example in Element).
+          <input class="aim-field" type="password" value="EsTc 1234 abcd" />
+        </label>
+      </fieldset>
+      <p class="aim-alert" role="alert">That recovery key or passphrase isn't right.</p>
+      <div class="row end">
+        <button class="aim-btn">Not Now</button>
+        <button class="aim-btn is-default">Restore</button>
+      </div>
     </div>
   </section>
 
@@ -133,12 +163,11 @@
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--self">Alice Anderson:</span> did this send?<span class="aim-msg__note"> (not sent)</span></p>
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <span class="aim-msg__html">nice, this is <b>bold</b> and <span style="color: #ff0000">red</span>, a <a href="https://example.org">link</a>, <code>code</code> and a <span data-mx-spoiler="">spoiler</span></span></p>
           <div class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <span class="aim-msg__html"><blockquote>a quote from another client</blockquote>and the reply</span></div>
-          <p class="aim-msg aim-msg--undecryptable"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> 🔒 Unable to decrypt this message yet.</p>
+          <p class="aim-msg aim-msg--undecryptable"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> 🔒 (encrypted message, waiting for the key to read it)</p>
           <div class="aim-msg"><div class="aim-msg__reply">In reply to <b>Alice Anderson</b>: see you at 5?</div><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> sounds good<span class="aim-msg__note"> (edited)</span></div>
           <div class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span><button class="aim-msg__attachment" title="Save cat.png…"><img class="aim-msg__image" src={bob} alt="cat.png" style="width: 80px" /></button></div>
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <button class="aim-msg__attachment" title="Save notes.txt…"><span class="aim-msg__file">📎 notes.txt<span class="aim-msg__note"> (12 KB)</span></span></button></p>
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <span class="aim-msg__note">(message deleted)</span></p>
-          <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <span class="aim-msg__note">(encrypted message, waiting for the key to read it)</span></p>
           <p class="aim-msg aim-msg--system">Bob Brown is away: "grabbing lunch"</p>
         </div>
         <img class="aim-buddy-icon" src={bob} alt="Bob's buddy icon" />

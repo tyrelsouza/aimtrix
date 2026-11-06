@@ -40,6 +40,16 @@ opt-level = 3
 panic = "abort"
 strip = true
 
+# Recovery passphrases go through 500,000 rounds of PBKDF2-SHA-512, which
+# takes ~10 s per try unoptimized. Optimizing the hash crates makes dev
+# builds and tests usable.
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+
 [dev-dependencies]
 mime = "0.3"
 tempfile = "3.27.0"

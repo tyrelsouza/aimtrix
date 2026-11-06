@@ -6,7 +6,9 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::{
     matrix::{
-        self, Session, media,
+        self, Session,
+        crypto::{self, Recovery},
+        media,
         members::ChatRoom,
         rooms::{self, Buddy, Section},
         sync::Status,
@@ -253,4 +255,24 @@ async fn client(session: &Session) -> Result<Client, String> {
         .as_ref()
         .map(|s| s.client.clone())
         .ok_or_else(|| "Not signed on.".to_owned())
+}
+
+/// Whether this device can read old messages from the key backup. Changes
+/// arrive as `recovery:status` events.
+#[tauri::command]
+pub fn recovery_status(session: State<'_, Session>) -> Recovery {
+    *session.recovery.lock().unwrap()
+}
+
+/// Open Restore Messages, or focus it.
+#[tauri::command]
+pub fn open_recovery(app: AppHandle) -> Result<(), String> {
+    windows::open_recovery(&app).map_err(|e| e.to_string())
+}
+
+/// Unlock this device's secrets with the recovery key or passphrase; old
+/// messages then decrypt as their keys download.
+#[tauri::command]
+pub async fn recover(session: State<'_, Session>, secret: String) -> Result<(), String> {
+    crypto::recover(&client(&session).await?, &secret).await
 }

@@ -189,9 +189,9 @@
         <span class="aim-msg__note">(message deleted)</span>
       </div>
     {:else if line.type === "undecryptable"}
-      <div class="aim-msg" title={time(line.timestamp)}>
+      <div class="aim-msg aim-msg--undecryptable" title={time(line.timestamp)}>
         <span class="aim-msg__name" class:aim-msg__name--self={line.own} class:aim-msg__name--buddy={!line.own}>{line.name}:</span>
-        <span class="aim-msg__note">{describeUndecryptable(line.reason)}</span>
+        🔒 {describeUndecryptable(line.reason)}
       </div>
     {:else if line.type === "message"}
       <div class="aim-msg" title={time(line.timestamp)}>
