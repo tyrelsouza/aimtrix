@@ -52,6 +52,7 @@
                 <button
                   class="aim-list__item"
                   class:is-selected={room.roomId === selected}
+                  class:is-unread={room.unread}
                   onclick={() => (selected = room.roomId)}
                 >
                   {room.name}

@@ -372,4 +372,101 @@ mod tests {
         syncing.stop().await;
         alice.logout().await.unwrap();
     }
+
+    fn find<'a>(buddies: &'a [rooms::Buddy], name: &str) -> Option<(usize, &'a rooms::Buddy)> {
+        buddies.iter().enumerate().find(|(_, b)| b.name == name)
+    }
+
+    /// `name` is unread and listed above `other`.
+    fn unread_above(buddies: &[rooms::Buddy], name: &str, other: &str) -> bool {
+        match (find(buddies, name), find(buddies, other)) {
+            (Some((i, b)), Some((j, _))) => b.unread && i < j,
+            _ => false,
+        }
+    }
+
+    /// Sign `user` on, catch up once, and send `body` to `room_id`.
+    async fn send_as(user: &str, room_id: &str, body: &str) {
+        use matrix_sdk::{
+            config::SyncSettings,
+            ruma::{RoomId, events::room::message::RoomMessageEventContent},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let client = login(dir.path(), PASS, HS, user, "aimtrix-test")
+            .await
+            .unwrap();
+        client.sync_once(SyncSettings::default()).await.unwrap();
+        let room = client
+            .get_room(&RoomId::parse(room_id).unwrap())
+            .unwrap_or_else(|| panic!("{user} isn't in {room_id}"));
+        room.send(RoomMessageEventContent::text_plain(body))
+            .await
+            .unwrap();
+        client.logout().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn new_message_bolds_buddy_and_moves_it_up() {
+        use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
+
+        let dir = tempfile::tempdir().unwrap();
+        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+            .await
+            .unwrap();
+        let syncing = sync::start(&alice, |_| {}).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let watcher = rooms::watch(syncing.room_list_service(), move |b| {
+            let _ = tx.send(b);
+        });
+
+        let room_ids = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        wait_for_buddies(&mut rx, "both DMs", {
+            let room_ids = room_ids.clone();
+            move |b| {
+                let ids: Vec<_> = ["Bob Brown", "Carol Chen"]
+                    .iter()
+                    .filter_map(|name| find(b, name).map(|(_, b)| b.room_id.clone()))
+                    .collect();
+                let found = ids.len() == 2;
+                *room_ids.lock().unwrap() = ids;
+                found
+            }
+        })
+        .await;
+        let [bob_dm, carol_dm] = room_ids.lock().unwrap().clone().try_into().unwrap();
+
+        // Alice talks in both, which marks everything before it read.
+        for id in [&bob_dm, &carol_dm] {
+            let room = alice
+                .get_room(&matrix_sdk::ruma::RoomId::parse(id).unwrap())
+                .unwrap();
+            room.send(RoomMessageEventContent::text_plain("unread test: hi"))
+                .await
+                .unwrap();
+        }
+        wait_for_buddies(&mut rx, "both DMs read", |b| {
+            ["Bob Brown", "Carol Chen"]
+                .iter()
+                .all(|name| find(b, name).is_some_and(|(_, b)| !b.unread))
+        })
+        .await;
+
+        send_as("bob", &bob_dm, "unread test: from bob").await;
+        wait_for_buddies(&mut rx, "Bob unread and on top", |b| {
+            unread_above(b, "Bob Brown", "Carol Chen")
+        })
+        .await;
+
+        // Carol's DM is encrypted, so this also covers counting decrypted messages.
+        send_as("carol", &carol_dm, "unread test: from carol").await;
+        wait_for_buddies(&mut rx, "Carol unread and on top", |b| {
+            unread_above(b, "Carol Chen", "Bob Brown")
+        })
+        .await;
+
+        watcher.abort();
+        syncing.stop().await;
+        alice.logout().await.unwrap();
+    }
 }

@@ -7,6 +7,7 @@ export type Buddy = {
   name: string;
   kind: "dm" | "group";
   section: Section;
+  unread: boolean;
 };
 
 export type Section = "favorites" | "buddies" | "chats" | "invitations";

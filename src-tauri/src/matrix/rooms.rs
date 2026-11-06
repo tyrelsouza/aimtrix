@@ -94,6 +94,8 @@ pub struct Buddy {
     pub name: String,
     pub kind: Kind,
     pub section: Section,
+    /// Has messages we haven't read, or was marked unread.
+    pub unread: bool,
 }
 
 /// Most rooms the list holds. Far more than anyone keeps on a Buddy List.
@@ -161,6 +163,7 @@ async fn buddy(room: &RoomListItem) -> Option<Buddy> {
             .unwrap_or_else(|| room.room_id().to_string()),
         kind: kind(&facts),
         section: section(&facts)?,
+        unread: room.num_unread_messages() > 0 || room.is_marked_unread(),
     })
 }
 
