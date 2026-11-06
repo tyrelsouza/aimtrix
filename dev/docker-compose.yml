@@ -1,0 +1,42 @@
+# Local Matrix test environment for AIMtrix.
+#   docker compose -f dev/docker-compose.yml up -d
+#   python3 dev/seed.py
+# Synapse:     http://localhost:8008
+# Element Web: http://localhost:8080  (second client to talk to AIMtrix)
+
+services:
+  synapse:
+    image: matrixdotorg/synapse:latest
+    environment:
+      SYNAPSE_CONFIG_PATH: /config/homeserver.yaml
+    # Create the signing key on first boot (as root), hand /data to the
+    # synapse user (uid 991, the image default), then run normally.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        python -m synapse.app.homeserver -c /config/homeserver.yaml --generate-keys &&
+        chown -R 991:991 /data &&
+        exec /start.py
+    volumes:
+      - ./synapse/homeserver.yaml:/config/homeserver.yaml:ro
+      - synapse-data:/data
+    ports:
+      - "127.0.0.1:8008:8008"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8008/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  element:
+    image: vectorim/element-web:latest
+    volumes:
+      - ./element/config.json:/app/config.json:ro
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      synapse:
+        condition: service_healthy
+
+volumes:
+  synapse-data:

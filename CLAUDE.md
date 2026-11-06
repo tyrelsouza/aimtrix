@@ -27,4 +27,4 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 ## Commands
 - Dev: `cargo tauri dev`
 - Rust tests: `cargo test --manifest-path src-tauri/Cargo.toml`
-- Local test homeserver: Synapse or conduwuit in Docker with presence enabled. Test against it, not real accounts.
+- Local test homeserver (see `dev/README.md`): `docker compose -f dev/docker-compose.yml up -d`, then `python3 dev/seed.py`. Users `alice`/`bob`/`carol`, password `aimtrix-test`, homeserver `http://localhost:8008`, Element Web at `http://localhost:8080`. Always test against this, never real accounts.

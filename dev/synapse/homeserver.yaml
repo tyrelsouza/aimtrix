@@ -1,0 +1,57 @@
+# Local test homeserver for AIMtrix development. NOT for production:
+# the secrets below are public and rate limits are effectively off.
+
+server_name: "localhost"
+public_baseurl: "http://localhost:8008/"
+pid_file: /data/homeserver.pid
+report_stats: false
+
+listeners:
+  - port: 8008
+    type: http
+    tls: false
+    x_forwarded: false
+    bind_addresses: ["0.0.0.0"]
+    resources:
+      - names: [client]
+        compress: false
+
+database:
+  name: sqlite3
+  args:
+    database: /data/homeserver.db
+
+media_store_path: /data/media_store
+signing_key_path: /data/localhost.signing.key
+
+# Used by dev/seed.py to create test users via the admin register API.
+registration_shared_secret: "aimtrix-dev-secret"
+macaroon_secret_key: "aimtrix-dev-macaroon"
+form_secret: "aimtrix-dev-form"
+enable_registration: false
+
+# AIMtrix needs presence for Online/Offline buddy groups (step 6.1).
+presence:
+  enabled: true
+
+# No federation on a dev box.
+federation_domain_whitelist: []
+trusted_key_servers: []
+suppress_key_server_warning: true
+
+# The seed script sends a lot quickly; don't throttle it.
+rc_message:
+  per_second: 1000
+  burst_count: 1000
+rc_login:
+  address: {per_second: 1000, burst_count: 1000}
+  account: {per_second: 1000, burst_count: 1000}
+  failed_attempts: {per_second: 1000, burst_count: 1000}
+rc_registration:
+  per_second: 1000
+  burst_count: 1000
+rc_joins:
+  local: {per_second: 1000, burst_count: 1000}
+rc_invites:
+  per_room: {per_second: 1000, burst_count: 1000}
+  per_user: {per_second: 1000, burst_count: 1000}
