@@ -59,7 +59,8 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
 
 /// Follow a room's conversation for its window, replacing any earlier
 /// watch (e.g. after a reload). Returns the current lines; changes go to
-/// the window as `room:<key>:timeline_diff` events.
+/// the window as `room:<key>:timeline_diff` events, and the names of who's
+/// typing as `room:<key>:typing`.
 pub async fn watch_timeline(
     app: &AppHandle,
     client: &Client,
@@ -67,15 +68,28 @@ pub async fn watch_timeline(
 ) -> Result<Vec<Line>, String> {
     let key = windows::room_key(room_id);
     let event = format!("room:{key}:timeline_diff");
+    let typing_event = format!("room:{key}:typing");
     let label = format!("{}{key}", windows::ROOM_LABEL_PREFIX);
-    let (lines, watching) = timeline::watch(client, room_id, {
-        let app = app.clone();
-        move |diff| {
-            if let Err(e) = app.emit_to(&label, &event, &diff) {
-                eprintln!("Couldn't send a timeline change to its window: {e}");
+    let (lines, watching) = timeline::watch(
+        client,
+        room_id,
+        {
+            let (app, label) = (app.clone(), label.clone());
+            move |diff| {
+                if let Err(e) = app.emit_to(&label, &event, &diff) {
+                    eprintln!("Couldn't send a timeline change to its window: {e}");
+                }
             }
-        }
-    })
+        },
+        {
+            let app = app.clone();
+            move |names| {
+                if let Err(e) = app.emit_to(&label, &typing_event, &names) {
+                    eprintln!("Couldn't send who's typing to its window: {e}");
+                }
+            }
+        },
+    )
     .await?;
     // Replacing an earlier watch drops it, which stops it.
     app.state::<Session>()
@@ -98,6 +112,11 @@ pub fn unwatch_timeline(app: &AppHandle, room_id: &str) {
 /// Send a plain-text message to a room whose window is open.
 pub async fn send_message(app: &AppHandle, room_id: &str, body: &str) -> Result<(), String> {
     watching(app, room_id)?.send(body).await
+}
+
+/// Tell a room whose window is open whether we're typing.
+pub async fn set_typing(app: &AppHandle, room_id: &str, typing: bool) -> Result<(), String> {
+    watching(app, room_id)?.set_typing(typing).await
 }
 
 /// Load older history in a room whose window is open. Returns whether the

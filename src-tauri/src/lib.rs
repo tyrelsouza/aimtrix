@@ -1,3 +1,7 @@
+// matrix-sdk futures nest deeply enough to pass the default limit (the room
+// window task in `matrix::timeline` does).
+#![recursion_limit = "256"]
+
 mod commands;
 mod matrix;
 mod session;
@@ -31,7 +35,8 @@ pub fn run() {
             commands::open_room,
             commands::room_timeline,
             commands::send_message,
-            commands::load_older
+            commands::load_older,
+            commands::set_typing
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

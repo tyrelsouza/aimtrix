@@ -3,14 +3,15 @@
 //! [`watch`] follows a room's [`Timeline`] and turns each change into a
 //! [`Diff`] of [`Line`]s. Every timeline item maps to exactly one line, so
 //! the window can apply the diffs by index. [`Watching::send`] sends
-//! through the same timeline, so a sent message shows up at once.
+//! through the same timeline, so a sent message shows up at once. The watch
+//! also reports who is typing.
 
 use eyeball_im::VectorDiff;
 use futures_util::StreamExt;
 use matrix_sdk::{
-    Client, RoomState,
+    Client, Room, RoomState,
     ruma::{
-        RoomId, UserId,
+        OwnedUserId, RoomId, UserId,
         events::room::message::{MessageType, RoomMessageEventContent},
     },
 };
@@ -20,6 +21,7 @@ use matrix_sdk_ui::timeline::{
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::async_runtime::{JoinHandle, spawn};
+use tokio::sync::broadcast::error::RecvError;
 
 /// History to load when the window opens, and each time you scroll up.
 const PAGE: u16 = 50;
@@ -73,6 +75,7 @@ pub async fn watch(
     client: &Client,
     room_id: &str,
     on_diff: impl Fn(Diff) + Send + 'static,
+    on_typing: impl Fn(Vec<String>) + Send + 'static,
 ) -> Result<(Vec<Line>, Watching), String> {
     let room_id = RoomId::parse(room_id).map_err(|e| format!("Bad room ID: {e}"))?;
     let room = match client.get_room(&room_id) {
@@ -86,10 +89,13 @@ pub async fn watch(
     let timeline = Arc::new(timeline);
     let (items, mut diffs) = timeline.subscribe().await;
     let lines = items.iter().map(|item| line(item)).collect();
+    // Leaves out our own typing. The guard keeps the subscription alive.
+    let (typing_guard, mut typing) = room.subscribe_to_typing_notifications();
 
     let task = spawn({
         let timeline = timeline.clone();
         async move {
+            let _typing_guard = typing_guard;
             // Both send their changes through `diffs`, so run them alongside.
             // Sync loads members lazily, so without fetching them senders can
             // lack display names.
@@ -112,6 +118,16 @@ pub async fn watch(
                         Some(batch) => batch.into_iter().map(diff).for_each(&on_diff),
                         None => break,
                     },
+                    users = typing.recv() => match users {
+                        Ok(users) => {
+                            // Named first, so `on_typing` isn't held across the await.
+                            let names = names(timeline.room(), &users).await;
+                            on_typing(names);
+                        }
+                        // Missed some; the next notice has the whole list.
+                        Err(RecvError::Lagged(_)) => {}
+                        Err(RecvError::Closed) => break,
+                    },
                 }
             }
         }
@@ -125,6 +141,19 @@ pub struct Watching {
     task: JoinHandle<()>,
 }
 
+/// Display names of `users` in `room`, for "Name is typing…".
+async fn names(room: &Room, users: &[OwnedUserId]) -> Vec<String> {
+    let mut names = Vec::with_capacity(users.len());
+    for user in users {
+        names.push(match room.get_member_no_sync(user).await {
+            // The display name, or the localpart if there's none.
+            Ok(Some(member)) => member.name().to_owned(),
+            _ => fallback_name(user),
+        });
+    }
+    names
+}
+
 impl Watching {
     /// Load a page of older history; it arrives as diffs. Returns whether
     /// the start of the room was reached.
@@ -133,6 +162,16 @@ impl Watching {
             .paginate_backwards(PAGE)
             .await
             .map_err(|e| format!("Couldn't load older messages: {e}"))
+    }
+
+    /// Tell the room whether we're typing. The SDK skips repeats, and the
+    /// notice runs out by itself if it isn't renewed.
+    pub async fn set_typing(&self, typing: bool) -> Result<(), String> {
+        self.timeline
+            .room()
+            .typing_notice(typing)
+            .await
+            .map_err(|e| format!("Couldn't send the typing notice: {e}"))
     }
 
     /// Send a plain-text message. It shows up in the lines right away and is

@@ -683,9 +683,14 @@ mod tests {
         let room_id = room_id.lock().unwrap().clone();
 
         let (tx, mut diffs) = tokio::sync::mpsc::unbounded_channel();
-        let (mut lines, task) = timeline::watch(&alice, &room_id, move |d| {
-            let _ = tx.send(d);
-        })
+        let (mut lines, task) = timeline::watch(
+            &alice,
+            &room_id,
+            move |d| {
+                let _ = tx.send(d);
+            },
+            |_| {},
+        )
         .await
         .unwrap();
         // Earlier tests in this room leave at least one message from each.
@@ -765,9 +770,14 @@ mod tests {
         let (alice, alice_sync, alice_list, room_id) =
             sign_on_to_room(alice_dir.path(), "alice", |b| b.name == "Bob Brown").await;
         let (tx, mut diffs) = tokio::sync::mpsc::unbounded_channel();
-        let (mut lines, watching) = timeline::watch(&alice, &room_id, move |d| {
-            let _ = tx.send(d);
-        })
+        let (mut lines, watching) = timeline::watch(
+            &alice,
+            &room_id,
+            move |d| {
+                let _ = tx.send(d);
+            },
+            |_| {},
+        )
         .await
         .unwrap();
 
@@ -785,9 +795,14 @@ mod tests {
         })
         .await;
         let (tx, mut bob_diffs) = tokio::sync::mpsc::unbounded_channel();
-        let (mut bob_lines, bob_watching) = timeline::watch(&bob, &room_id, move |d| {
-            let _ = tx.send(d);
-        })
+        let (mut bob_lines, bob_watching) = timeline::watch(
+            &bob,
+            &room_id,
+            move |d| {
+                let _ = tx.send(d);
+            },
+            |_| {},
+        )
         .await
         .unwrap();
         wait_for_lines(
@@ -822,9 +837,14 @@ mod tests {
         let (alice, syncing, list, room_id) =
             sign_on_to_room(dir.path(), "alice", |b| b.name == "Test Chat").await;
         let (tx, mut diffs) = tokio::sync::mpsc::unbounded_channel();
-        let (mut lines, watching) = timeline::watch(&alice, &room_id, move |d| {
-            let _ = tx.send(d);
-        })
+        let (mut lines, watching) = timeline::watch(
+            &alice,
+            &room_id,
+            move |d| {
+                let _ = tx.send(d);
+            },
+            |_| {},
+        )
         .await
         .unwrap();
 
@@ -869,5 +889,77 @@ mod tests {
         list.abort();
         syncing.stop().await;
         alice.logout().await.unwrap();
+    }
+
+    /// Wait up to 20 s for someone's typing list to equal `want`.
+    async fn wait_for_typing(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<Vec<String>>,
+        want: &[&str],
+    ) {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Some(names)) if names == want => return,
+                Ok(Some(_)) => {}
+                _ => panic!("timed out waiting for typing {want:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn typing_shows_both_ways() {
+        let alice_dir = tempfile::tempdir().unwrap();
+        let (alice, alice_sync, alice_list, room_id) =
+            sign_on_to_room(alice_dir.path(), "alice", |b| b.name == "Bob Brown").await;
+        let bob_dir = tempfile::tempdir().unwrap();
+        let (bob, bob_sync, bob_list, _) = sign_on_to_room(bob_dir.path(), "bob", {
+            let room_id = room_id.clone();
+            move |b| b.room_id == room_id
+        })
+        .await;
+
+        let (tx, mut alice_sees) = tokio::sync::mpsc::unbounded_channel();
+        let (_, alice_watch) = timeline::watch(
+            &alice,
+            &room_id,
+            |_| {},
+            move |names| {
+                let _ = tx.send(names);
+            },
+        )
+        .await
+        .unwrap();
+        let (tx, mut bob_sees) = tokio::sync::mpsc::unbounded_channel();
+        let (_, bob_watch) = timeline::watch(
+            &bob,
+            &room_id,
+            |_| {},
+            move |names| {
+                let _ = tx.send(names);
+            },
+        )
+        .await
+        .unwrap();
+
+        bob_watch.set_typing(true).await.unwrap();
+        wait_for_typing(&mut alice_sees, &["Bob Brown"]).await;
+        bob_watch.set_typing(false).await.unwrap();
+        wait_for_typing(&mut alice_sees, &[]).await;
+
+        alice_watch.set_typing(true).await.unwrap();
+        wait_for_typing(&mut bob_sees, &["Alice Anderson"]).await;
+        alice_watch.set_typing(false).await.unwrap();
+        wait_for_typing(&mut bob_sees, &[]).await;
+
+        for (watching, list, syncing, client) in [
+            (alice_watch, alice_list, alice_sync, alice),
+            (bob_watch, bob_list, bob_sync, bob),
+        ] {
+            drop(watching);
+            list.abort();
+            syncing.stop().await;
+            client.logout().await.unwrap();
+        }
     }
 }

@@ -4,7 +4,7 @@
   import { tick } from "svelte";
   import { page } from "$app/state";
   import { watchBuddyList } from "$lib/buddylist";
-  import { watchTimeline, type Line } from "$lib/timeline";
+  import { describeTyping, watchTimeline, watchTyping, type Line } from "$lib/timeline";
 
   const roomId = page.url.searchParams.get("room") ?? "";
   let name = $state("");
@@ -14,6 +14,8 @@
   let transcript: HTMLDivElement;
   let box: HTMLTextAreaElement;
 
+  /** Names of who's typing, not counting you. */
+  let typing = $state<string[]>([]);
   /** Loading older messages. */
   let loading = $state(false);
   /** Set once `load_older` says there's no more history. */
@@ -52,6 +54,47 @@
     ),
   );
 
+  $effect(() => watchTyping((names) => (typing = names)));
+
+  // Your own typing notice: started when you type, renewed while you keep
+  // typing, and stopped when you send, clear the box or pause. The server
+  // drops it after a few seconds if it isn't renewed.
+  const RENEW_EVERY = 2000;
+  const IDLE_AFTER = 5000;
+  let typingSent = false;
+  let typingSentAt = 0;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function typed() {
+    clearTimeout(idleTimer);
+    if (!draft.trim()) {
+      stopTyping();
+      return;
+    }
+    if (!typingSent || Date.now() - typingSentAt > RENEW_EVERY) {
+      typingSent = true;
+      typingSentAt = Date.now();
+      setTyping(true);
+    }
+    // Stopped typing without sending: say so after a while.
+    idleTimer = setTimeout(stopTyping, IDLE_AFTER);
+  }
+
+  function stopTyping() {
+    clearTimeout(idleTimer);
+    if (typingSent) {
+      typingSent = false;
+      setTyping(false);
+    }
+  }
+
+  function setTyping(on: boolean) {
+    // A lost typing notice isn't worth interrupting you for.
+    invoke("set_typing", { roomId, typing: on }).catch((e) =>
+      console.warn("Couldn't send the typing notice:", e),
+    );
+  }
+
   /** Load older messages when you scroll near the top. */
   function scrolled() {
     if (transcript.scrollTop < 40) loadOlder();
@@ -85,6 +128,7 @@
     if (e.altKey) {
       box.setRangeText("\n", box.selectionStart, box.selectionEnd, "end");
       draft = box.value;
+      typed();
     } else {
       send();
     }
@@ -96,6 +140,7 @@
     if (!body.trim()) return;
     // Clear at once: the message shows up in the transcript straight away.
     draft = "";
+    stopTyping();
     error = "";
     box.focus();
     try {
@@ -137,6 +182,7 @@
         bind:value={draft}
         bind:this={box}
         onkeydown={keydown}
+        oninput={typed}
       ></textarea>
       <div class="buttons">
         <button class="aim-btn is-default" disabled={!draft.trim()}>Send</button>
@@ -146,7 +192,7 @@
   <footer class="aim-statusbar">
     <!-- Here, not above the messages, so the text doesn't jump. -->
     <span class="aim-statusbar__section" role="status">
-      {loading ? "Loading older messages…" : name}
+      {loading ? "Loading older messages…" : describeTyping(typing) || name}
     </span>
   </footer>
 </div>

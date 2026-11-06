@@ -134,6 +134,13 @@ pub async fn load_older(app: AppHandle, room_id: String) -> Result<bool, String>
     session::load_older(&app, &room_id).await
 }
 
+/// Tell the room whether you're typing in its IM window. Others' typing
+/// arrives as `room:<key>:typing` events with their names.
+#[tauri::command]
+pub async fn set_typing(app: AppHandle, room_id: String, typing: bool) -> Result<(), String> {
+    session::set_typing(&app, &room_id, typing).await
+}
+
 /// The signed-on client. Cloned so the session isn't locked while it's used.
 async fn client(session: &Session) -> Result<Client, String> {
     let signed = session.signed.lock().await;

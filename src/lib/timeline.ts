@@ -71,8 +71,7 @@ export function watchTimeline(
   onChange: (lines: Line[]) => void,
   onError: (message: string) => void,
 ): () => void {
-  // The window's label is `room-<key>`; its events are `room:<key>:…`.
-  const key = getCurrentWebviewWindow().label.replace(/^room-/, "");
+  const key = roomKey();
   let stopped = false;
   let lines: Line[] | null = null;
   // Diffs that arrive before the first lines come after them, so hold them.
@@ -100,4 +99,29 @@ export function watchTimeline(
     stopped = true;
     unlisten.then((f) => f());
   };
+}
+
+/**
+ * Call `onChange` with the names of who's typing in this room window's room
+ * (never you), every time that changes. Returns a function that stops
+ * listening.
+ */
+export function watchTyping(onChange: (names: string[]) => void): () => void {
+  const unlisten = listen<string[]>(`room:${roomKey()}:typing`, (e) => onChange(e.payload));
+  return () => {
+    unlisten.then((f) => f());
+  };
+}
+
+/** "Bob is typing…", or "" if nobody is. */
+export function describeTyping(names: string[]): string {
+  if (names.length === 0) return "";
+  if (names.length === 1) return `${names[0]} is typing…`;
+  if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`;
+  return "Several people are typing…";
+}
+
+/** The window's label is `room-<key>`; its events are `room:<key>:…`. */
+function roomKey(): string {
+  return getCurrentWebviewWindow().label.replace(/^room-/, "");
 }
