@@ -8,6 +8,8 @@ export type Buddy = {
   kind: "dm" | "group";
   section: Section;
   unread: boolean;
+  /** `data:` URL, or null for the default icon. */
+  icon: string | null;
 };
 
 export type Section = "favorites" | "buddies" | "chats" | "invitations";

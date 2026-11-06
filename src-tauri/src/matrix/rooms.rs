@@ -14,6 +14,9 @@ use matrix_sdk_ui::room_list_service::{
 };
 use serde::Serialize;
 use tauri::async_runtime::{JoinHandle, spawn};
+use tokio::sync::mpsc::unbounded_channel;
+
+use super::media::Icons;
 
 /// Room tag that forces a room to be shown as a Chat Room, even if it looks
 /// like a DM.
@@ -96,13 +99,15 @@ pub struct Buddy {
     pub section: Section,
     /// Has messages we haven't read, or was marked unread.
     pub unread: bool,
+    /// Buddy Icon as a `data:` URL. `None` means show the default icon.
+    pub icon: Option<String>,
 }
 
 /// Most rooms the list holds. Far more than anyone keeps on a Buddy List.
 const MAX_ROOMS: usize = 10_000;
 
 /// Watch the room list in the background. `on_update` gets the whole list,
-/// most recently active first, every time it changes.
+/// most recently active first, every time it changes or an icon arrives.
 pub fn watch(
     service: Arc<RoomListService>,
     on_update: impl Fn(Vec<Buddy>) + Send + 'static,
@@ -118,15 +123,23 @@ pub fn watch(
         let (diffs, controller) = list.entries_with_dynamic_adapters(MAX_ROOMS);
         controller.set_filter(Box::new(new_filter_non_left()));
         let mut diffs = std::pin::pin!(diffs);
+        let (icon_ready, mut icons_ready) = unbounded_channel();
+        let icons = Icons::new(service.client().clone(), icon_ready);
 
         let mut rooms = Vector::new();
-        while let Some(batch) = diffs.next().await {
-            for diff in batch {
-                diff.apply(&mut rooms);
+        loop {
+            tokio::select! {
+                Some(batch) = diffs.next() => {
+                    for diff in batch {
+                        diff.apply(&mut rooms);
+                    }
+                }
+                Some(()) = icons_ready.recv() => {}
+                else => break,
             }
             let mut buddies = Vec::with_capacity(rooms.len());
             for room in &rooms {
-                if let Some(buddy) = buddy(room).await {
+                if let Some(buddy) = buddy(room, &icons).await {
                     buddies.push(buddy);
                 }
             }
@@ -135,7 +148,7 @@ pub fn watch(
     })
 }
 
-async fn buddy(room: &RoomListItem) -> Option<Buddy> {
+async fn buddy(room: &RoomListItem, icons: &Arc<Icons>) -> Option<Buddy> {
     let membership = match room.state() {
         RoomState::Joined => Membership::Joined,
         RoomState::Invited => Membership::Invited,
@@ -150,10 +163,23 @@ async fn buddy(room: &RoomListItem) -> Option<Buddy> {
         .is_some_and(|tags| tags.keys().any(|tag| tag.as_ref() == CHAT_TAG));
     let facts = RoomFacts {
         membership,
-        in_m_direct: room.direct_targets_length() > 0,
+        // Also checks the invite's `is_direct` flag, which `m.direct` lacks
+        // until we join.
+        in_m_direct: room.is_direct().await.unwrap_or(false),
         member_count: room.active_members_count(),
         favourite: room.is_favourite(),
         chat_tag,
+    };
+    let kind = kind(&facts);
+    // A DM without its own avatar shows the other person's.
+    let avatar = match (room.avatar_url(), kind) {
+        (Some(url), _) => Some(url),
+        (None, Kind::Dm) => room
+            .heroes()
+            .await
+            .into_iter()
+            .find_map(|hero| hero.avatar_url),
+        (None, Kind::Group) => None,
     };
     Some(Buddy {
         room_id: room.room_id().to_string(),
@@ -161,9 +187,10 @@ async fn buddy(room: &RoomListItem) -> Option<Buddy> {
             .cached_display_name()
             .map(|name| name.to_string())
             .unwrap_or_else(|| room.room_id().to_string()),
-        kind: kind(&facts),
+        kind,
         section: section(&facts)?,
         unread: room.num_unread_messages() > 0 || room.is_marked_unread(),
+        icon: avatar.and_then(|mxc| icons.get(&mxc)),
     })
 }
 

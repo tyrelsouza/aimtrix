@@ -4,6 +4,7 @@
   in a browser while `npm run dev` is running.
 -->
 <script lang="ts">
+  import { DEFAULT_CHAT_ICON, DEFAULT_DM_ICON } from "$lib/icons";
   const icon = (color: string) =>
     "data:image/svg+xml," +
     encodeURIComponent(
@@ -18,7 +19,7 @@
   const alice = icon("#dc3c3c");
   const bob = icon("#3c5adc");
   const chat = icon("#3caa5a");
-  const none = icon("#c0c0c0");
+  const none = DEFAULT_DM_ICON;
 </script>
 
 <div class="demo">
@@ -84,7 +85,7 @@
         <details class="aim-group" open>
           <summary>Chats <span class="aim-group__count">(1)</span></summary>
           <ul class="aim-list">
-            <li><button class="aim-list__item is-unread"><img class="aim-list__icon" src={none} alt="" />Secret Chat</button></li>
+            <li><button class="aim-list__item is-unread"><img class="aim-list__icon" src={DEFAULT_CHAT_ICON} alt="" />Secret Chat</button></li>
           </ul>
         </details>
         <details class="aim-group">

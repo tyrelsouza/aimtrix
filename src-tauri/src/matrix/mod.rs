@@ -1,6 +1,7 @@
 //! The single Matrix session owned by the Rust core: sign on, resume, sign off.
 
 mod keyring;
+mod media;
 pub mod rooms;
 pub mod sync;
 
@@ -462,6 +463,40 @@ mod tests {
         send_as("carol", &carol_dm, "unread test: from carol").await;
         wait_for_buddies(&mut rx, "Carol unread and on top", |b| {
             unread_above(b, "Carol Chen", "Bob Brown")
+        })
+        .await;
+
+        watcher.abort();
+        syncing.stop().await;
+        alice.logout().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn buddy_icons_load_for_rooms_with_avatars() {
+        let dir = tempfile::tempdir().unwrap();
+        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+            .await
+            .unwrap();
+        let syncing = sync::start(&alice, |_| {}).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let watcher = rooms::watch(syncing.room_list_service(), move |b| {
+            let _ = tx.send(b);
+        });
+
+        let icon = |b: &[rooms::Buddy], name: &str| find(b, name).map(|(_, b)| b.icon.clone());
+        // Seeded avatars are PNGs: Bob's profile picture shows in his DM, and
+        // Test Chat has a room avatar. Carol and Secret Chat have none.
+        wait_for_buddies(&mut rx, "icons for Bob and Test Chat", |b| {
+            let png = |name| {
+                icon(b, name)
+                    .flatten()
+                    .is_some_and(|i| i.starts_with("data:image/png;base64,"))
+            };
+            png("Bob Brown")
+                && png("Test Chat")
+                && icon(b, "Carol Chen") == Some(None)
+                && icon(b, "Secret Chat") == Some(None)
         })
         .await;
 

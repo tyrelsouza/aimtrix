@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { describe, watchSyncStatus, type SyncStatus } from "$lib/sync";
   import { SECTIONS, watchBuddyList, type Buddy } from "$lib/buddylist";
+  import { DEFAULT_CHAT_ICON, DEFAULT_DM_ICON } from "$lib/icons";
 
   let userId = $state<string | null>(null);
   let status = $state<SyncStatus>({ state: "connecting" });
@@ -55,6 +56,11 @@
                   class:is-unread={room.unread}
                   onclick={() => (selected = room.roomId)}
                 >
+                  <img
+                    class="aim-list__icon"
+                    src={room.icon ?? (room.kind === "dm" ? DEFAULT_DM_ICON : DEFAULT_CHAT_ICON)}
+                    alt=""
+                  />
                   {room.name}
                 </button>
               </li>
