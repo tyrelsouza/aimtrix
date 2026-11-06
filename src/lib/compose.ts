@@ -61,6 +61,19 @@ export function serialize(editor: HTMLElement): { body: string; html: string | n
   return { body, html: formatted ? html : null };
 }
 
+/**
+ * A message in your default text color: anything not colored otherwise
+ * takes `color`. Black (the default) leaves the message as it is.
+ */
+export function withDefaultColor(
+  message: { body: string; html: string | null },
+  color: string,
+): { body: string; html: string | null } {
+  if (!HEX.test(color) || color.toLowerCase() === "#000000") return message;
+  const inner = message.html ?? escape(message.body).replace(/\n/g, "<br>");
+  return { body: message.body, html: `<font data-mx-color="${color.toLowerCase()}">${inner}</font>` };
+}
+
 /** Opening and closing tags for the formatting `el` applies, or "" if none. */
 function wrappers(el: HTMLElement): [string, string] {
   const tag = el.tagName.toLowerCase();

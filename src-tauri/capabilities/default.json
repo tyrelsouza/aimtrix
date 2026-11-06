@@ -10,7 +10,8 @@
     "verify",
     "setup-recovery",
     "away",
-    "add-buddy"
+    "add-buddy",
+    "preferences"
   ],
   "permissions": [
     "core:default",

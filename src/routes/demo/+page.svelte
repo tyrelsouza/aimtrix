@@ -245,6 +245,43 @@
     </div>
   </section>
 
+  <!-- Preferences -->
+  <section class="aim-window" style="width: 320px">
+    <div class="aim-titlebar">
+      <img class="aim-titlebar__icon" src={appIcon} alt="" />
+      <span class="aim-titlebar__title">Preferences</span>
+      <div class="aim-titlebar__controls">
+        <button class="aim-titlebar__btn aim-titlebar__btn--close" aria-label="Close"></button>
+      </div>
+    </div>
+    <div class="aim-window__body">
+      <fieldset class="aim-groupbox">
+        <legend>Away</legend>
+        <label class="row" style="align-items: center; gap: 4px"><input type="checkbox" /> Send my away message as an auto-reply</label>
+      </fieldset>
+      <fieldset class="aim-groupbox">
+        <legend>Fonts</legend>
+        <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 6px; align-items: center">
+          <span>Conversations:</span>
+          <select class="aim-field"><option>Verdana</option></select>
+          <span>Size:</span>
+          <select class="aim-field"><option>Large</option></select>
+          <span>My messages:</span>
+          <div class="row" style="gap: 2px">
+            {#each ["#000000", "#ff0000", "#0000ff", "#008000"] as hex}
+              <span class="aim-palette__swatch" style:background={hex} style:display="inline-block"></span>
+            {/each}
+          </div>
+        </div>
+        <p class="aim-field" style="margin: 6px 0 0; font-family: Verdana, var(--font-ui); font-size: 14px; color: #0000ff">Me: Hey, what's up?</p>
+      </fieldset>
+      <div class="row end">
+        <button class="aim-btn">Cancel</button>
+        <button class="aim-btn is-default">OK</button>
+      </div>
+    </div>
+  </section>
+
   <!-- IM window -->
   <section class="aim-window" style="width: 360px; height: 340px">
     <div class="aim-titlebar">

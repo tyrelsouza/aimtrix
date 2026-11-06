@@ -112,7 +112,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 - [x] **6.3 Add Buddy.** Start a new DM by entering a Matrix ID. *Done when:* the new DM appears under Buddies.
 - [x] **6.4 Send files.** Send a file or image from an IM or Chat Room window: a button that opens a file picker (run from Rust, like Save), plus drag and drop onto the window. Images get a thumbnail and size; uploads are encrypted in encrypted rooms (the SDK's `send_attachment`), show progress in the status bar, and can be cancelled. *Done when:* a file and an image sent from AIMtrix open in Element, in a plain and an encrypted room.
 - [x] **6.5 Block.** Block and unblock buddies (ignore user). *Done when:* a blocked user's messages are hidden.
-- [ ] **6.6 Preferences window.** Settings for auto-reply and fonts. *Done when:* settings persist across restarts.
+- [x] **6.6 Preferences window.** Settings for auto-reply and fonts. *Done when:* settings persist across restarts.
 - [ ] **6.7 Auto-reply.** When away, auto-reply once per conversation. Off by default. *Done when:* it replies once, not on every message.
 - [ ] **6.8 Packaging.** Build Linux packages (AppImage/deb) with `npm run tauri build`. *Done when:* the package installs and runs on a clean machine.
 

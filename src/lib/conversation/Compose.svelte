@@ -5,7 +5,8 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import type { Snippet } from "svelte";
-  import { COLORS, serialize } from "$lib/compose";
+  import { COLORS, serialize, withDefaultColor } from "$lib/compose";
+  import { watchPreferences } from "$lib/preferences";
   import { pasteClipboardPicture, pastedPictures, sendFiles, sendPasted } from "./upload";
 
   let {
@@ -34,6 +35,16 @@
   let underline = $state(false);
   let color = $state(COLORS[0][0]);
   let paletteOpen = $state(false);
+  /** Your messages' color from Preferences, for text you haven't colored. */
+  let defaultColor = $state(COLORS[0][0]);
+
+  $effect(() =>
+    watchPreferences((p) => {
+      // The toolbar follows until you pick a color yourself.
+      if (color === defaultColor) color = p.textColor;
+      defaultColor = p.textColor;
+    }),
+  );
 
   // Ready to type when the window opens.
   $effect(() => editor.focus());
@@ -155,7 +166,7 @@
 
   async function send(e?: SubmitEvent) {
     e?.preventDefault();
-    const { body, html } = serialize(editor);
+    const { body, html } = withDefaultColor(serialize(editor), defaultColor);
     if (!body.trim()) return;
     const saved = editor.innerHTML;
     // Clear at once: the message shows up in the transcript straight away.
@@ -213,6 +224,7 @@
       aria-multiline="true"
       aria-label="Message"
       bind:this={editor}
+      style:color={defaultColor}
       onkeydown={keydown}
       oninput={edited}
       onpaste={paste}
@@ -242,6 +254,8 @@
   }
   .editor {
     flex: 1;
+    font-family: var(--font-conversation, var(--font-ui));
+    font-size: var(--font-size-conversation, 12px);
     min-width: 0;
     /* About three lines, then it scrolls. */
     height: 4.6em;

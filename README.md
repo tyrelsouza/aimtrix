@@ -17,6 +17,7 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 | Add Buddy | Start a DM by Matrix ID, or just a name on your own server. |
 | Send File | Send files and pictures: a button, drag and drop, or paste a picture. Encrypted in encrypted rooms. |
 | Block | Block and unblock a buddy from their IM window; their messages are hidden everywhere. |
+| Preferences | Font and size for conversations, and the color of your messages. |
 | IM window | One window per DM, with Buddy Icons, rich text (bold, italic, fonts, colors), "is typing…", read receipts, images, files, edits, deletions and replies. |
 | Chat Room window | Member list, topic, and "X has entered the room" lines. |
 | Buddy Icon | Profile pictures, with original default icons. |
@@ -28,7 +29,7 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 - Emoji verification works against your other sessions.
 - Accounts without recovery can set it up.
 
-Coming next (see `PLAN.md`): a Preferences window, auto-reply and Linux packages; then other server software, matrix.org testing and browser (OAuth) sign-on; macOS and Windows; and last, original sounds with mute.
+Coming next (see `PLAN.md`): auto-reply and Linux packages; then other server software, matrix.org testing and browser (OAuth) sign-on; macOS and Windows; and last, original sounds with mute.
 
 What counts as a DM: a room listed in `m.direct`, or one with at most two members. Tag a room `aimtrix.chat` to make it open as a Chat Room anyway.
 

@@ -56,6 +56,28 @@ pub fn open_recovery(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Label of the Preferences window.
+pub const PREFERENCES_LABEL: &str = "preferences";
+
+/// Preferences: auto-reply and fonts.
+pub fn open_preferences(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(PREFERENCES_LABEL) {
+        window.unminimize()?;
+        return window.set_focus();
+    }
+    WebviewWindowBuilder::new(
+        app,
+        PREFERENCES_LABEL,
+        WebviewUrl::App("/preferences".into()),
+    )
+    .title("Preferences")
+    .inner_size(340.0, 330.0)
+    .resizable(false)
+    .center()
+    .build()?;
+    Ok(())
+}
+
 /// Label of the Add Buddy window.
 pub const ADD_BUDDY_LABEL: &str = "add-buddy";
 

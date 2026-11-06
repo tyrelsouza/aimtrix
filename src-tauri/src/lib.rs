@@ -4,6 +4,7 @@
 
 mod commands;
 mod matrix;
+mod preferences;
 mod session;
 mod windows;
 
@@ -15,6 +16,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(matrix::Session::default())
         .setup(|app| {
+            app.manage(preferences::Store::open(app.handle())?);
             let app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = startup(&app).await {
@@ -49,6 +51,9 @@ pub fn run() {
             commands::paste_picture,
             commands::cancel_upload,
             commands::open_add_buddy,
+            commands::open_preferences,
+            commands::get_preferences,
+            commands::set_preferences,
             commands::block_buddy,
             commands::unblock_buddy,
             commands::add_buddy,

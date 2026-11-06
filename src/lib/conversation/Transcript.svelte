@@ -15,6 +15,7 @@
     type Media,
   } from "$lib/timeline";
   import { mxFormatting } from "$lib/compose";
+  import { applyFonts, watchPreferences } from "$lib/preferences";
 
   let {
     roomId,
@@ -169,6 +170,9 @@
   function time(timestamp: number) {
     return new Date(timestamp).toLocaleString();
   }
+
+  // The whole window (transcript and message box) follows Preferences.
+  $effect(() => watchPreferences(applyFonts));
 </script>
 
 <svelte:window onfocus={() => (focused = true)} onblur={() => (focused = false)} />

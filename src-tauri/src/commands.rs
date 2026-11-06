@@ -19,7 +19,7 @@ use crate::{
         upload,
         verify::{Flow, Step, Trust},
     },
-    session, windows,
+    preferences, session, windows,
 };
 
 /// Buddy Icons in the IM window are 48 px; 96 stays sharp on high-DPI
@@ -407,6 +407,29 @@ pub async fn set_away(session: State<'_, Session>, message: Option<String>) -> R
         .map(|s| s.presence.clone())
         .ok_or("Not signed on.")?;
     presence.set_away(message.as_deref()).await
+}
+
+/// Open Preferences, or focus it.
+#[tauri::command]
+pub fn open_preferences(app: AppHandle) -> Result<(), String> {
+    windows::open_preferences(&app).map_err(|e| e.to_string())
+}
+
+/// The preferences. Changes arrive as `preferences:update` events.
+#[tauri::command]
+pub fn get_preferences(store: State<'_, preferences::Store>) -> preferences::Preferences {
+    store.get()
+}
+
+/// Save new preferences and share them with every window. Returns them as
+/// saved (anything out of range is put back to its default).
+#[tauri::command]
+pub fn set_preferences(
+    app: AppHandle,
+    store: State<'_, preferences::Store>,
+    preferences: preferences::Preferences,
+) -> Result<preferences::Preferences, String> {
+    store.set(&app, preferences)
 }
 
 /// Open Add Buddy, or focus it.

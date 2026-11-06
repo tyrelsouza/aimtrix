@@ -463,9 +463,11 @@ button.aim-list__item:focus-visible {
 
 /* ---------- Conversation transcript ---------- */
 
+/* Conversations use the font from Preferences (`applyFonts`). */
 .aim-transcript {
   padding: 4px 6px;
-  font-size: 12px;
+  font-family: var(--font-conversation, var(--font-ui));
+  font-size: var(--font-size-conversation, 12px);
   line-height: 1.35;
   user-select: text;
   -webkit-user-select: text;

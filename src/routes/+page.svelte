@@ -174,7 +174,7 @@
       </p>
     {/if}
     <div class="buttons">
-      <span class="row">
+      <span class="actions">
         <button class="aim-btn" onclick={() => invoke("open_add_buddy")}>Add Buddy…</button>
         <button
           class="aim-btn"
@@ -184,6 +184,7 @@
         >
           Away…
         </button>
+        <button class="aim-btn" onclick={() => invoke("open_preferences")}>Preferences…</button>
         <button class="aim-btn" onclick={signOff} disabled={busy}>Sign Off</button>
       </span>
       {#if import.meta.env.DEV}
@@ -232,9 +233,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .row {
-    display: flex;
+  /* Two by two, so the buttons fit a narrow Buddy List. */
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 4px;
+    flex: 1;
   }
   .buttons {
     display: flex;
