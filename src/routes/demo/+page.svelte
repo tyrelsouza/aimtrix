@@ -189,6 +189,7 @@
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Carol Chen:</span> hi everyone!</p>
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--self">Alice Anderson:</span> hey carol</p>
           <p class="aim-msg aim-msg--system">Bob Brown has left the room.</p>
+          <p class="aim-msg aim-msg--system">Carol Chen changed the topic to: weekend plans</p>
         </div>
         <div class="members">
           <span>3 people here</span>

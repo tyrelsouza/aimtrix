@@ -14,15 +14,18 @@ use matrix_sdk::{
     ruma::{
         EventId, OwnedEventId, OwnedUserId, RoomId, UserId,
         api::client::receipt::create_receipt::v3::ReceiptType,
-        events::room::{
-            MediaSource,
-            message::{MessageFormat, MessageType, RoomMessageEventContent},
+        events::{
+            StateEventContentChange,
+            room::{
+                MediaSource,
+                message::{MessageFormat, MessageType, RoomMessageEventContent},
+            },
         },
     },
 };
 use matrix_sdk_ui::timeline::{
-    EventSendState, MsgLikeKind, Profile, RoomExt, Timeline, TimelineDetails, TimelineItem,
-    TimelineItemContent, VirtualTimelineItem,
+    AnyOtherStateEventContentChange, EventSendState, MembershipChange, MsgLikeKind, Profile,
+    RoomExt, Timeline, TimelineDetails, TimelineItem, TimelineItemContent, VirtualTimelineItem,
 };
 use serde::Serialize;
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
@@ -75,10 +78,55 @@ pub enum Line {
         own: bool,
         timestamp: u64,
     },
+    /// Someone entered or left the room, or was invited, removed or banned:
+    /// "Name has entered the room."
+    Membership {
+        id: String,
+        /// Whose membership changed (not who changed it).
+        name: String,
+        change: MemberChange,
+        timestamp: u64,
+    },
+    /// The topic was set or removed.
+    Topic {
+        id: String,
+        /// Who changed it.
+        name: String,
+        /// `None` when it was removed.
+        topic: Option<String>,
+        timestamp: u64,
+    },
     /// The room's first event is loaded: there's no more history.
     Start { id: String },
-    /// Not shown yet: other message types, state events, date dividers…
+    /// Not shown yet: other message types, other state events, date dividers…
     Other { id: String },
+}
+
+/// A change of membership worth a line in the conversation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MemberChange {
+    Joined,
+    Left,
+    Invited,
+    Kicked,
+    Banned,
+}
+
+impl MemberChange {
+    /// `None` for changes not worth a line, like a declined invite or a
+    /// knock.
+    fn from_sdk(change: MembershipChange) -> Option<Self> {
+        use MembershipChange as C;
+        match change {
+            C::Joined | C::InvitationAccepted | C::KnockAccepted => Some(Self::Joined),
+            C::Left => Some(Self::Left),
+            C::Invited => Some(Self::Invited),
+            C::Kicked => Some(Self::Kicked),
+            C::Banned | C::KickedAndBanned => Some(Self::Banned),
+            _ => None,
+        }
+    }
 }
 
 /// What kind of attachment a message has.
@@ -475,12 +523,42 @@ fn line(item: &TimelineItem) -> Line {
             _ => Line::Other { id },
         };
     };
-    let Some(msg_like) = event.content().as_msglike() else {
-        return Line::Other { id };
-    };
     let name = sender_name(event.sender_profile(), event.sender());
     let own = event.is_own();
     let timestamp = event.timestamp().get().into();
+    let msg_like = match event.content() {
+        TimelineItemContent::MsgLike(msg_like) => msg_like,
+        TimelineItemContent::MembershipChange(membership) => {
+            return match membership.change().and_then(MemberChange::from_sdk) {
+                Some(change) => Line::Membership {
+                    id,
+                    name: membership
+                        .display_name()
+                        .unwrap_or_else(|| fallback_name(membership.user_id())),
+                    change,
+                    timestamp,
+                },
+                None => Line::Other { id },
+            };
+        }
+        TimelineItemContent::OtherState(state) => {
+            return match state.content() {
+                AnyOtherStateEventContentChange::RoomTopic(StateEventContentChange::Original {
+                    content,
+                    ..
+                }) => Line::Topic {
+                    id,
+                    name,
+                    topic: Some(content.topic.trim())
+                        .filter(|t| !t.is_empty())
+                        .map(ToOwned::to_owned),
+                    timestamp,
+                },
+                _ => Line::Other { id },
+            };
+        }
+        _ => return Line::Other { id },
+    };
     let message = match &msg_like.kind {
         MsgLikeKind::Message(message) => message,
         MsgLikeKind::Redacted => {
@@ -632,6 +710,36 @@ fn fallback_name(user_id: &UserId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_some_membership_changes_get_a_line() {
+        use MembershipChange as C;
+        assert_eq!(
+            MemberChange::from_sdk(C::Joined),
+            Some(MemberChange::Joined)
+        );
+        assert_eq!(
+            MemberChange::from_sdk(C::InvitationAccepted),
+            Some(MemberChange::Joined)
+        );
+        assert_eq!(MemberChange::from_sdk(C::Left), Some(MemberChange::Left));
+        assert_eq!(
+            MemberChange::from_sdk(C::KickedAndBanned),
+            Some(MemberChange::Banned)
+        );
+        assert_eq!(MemberChange::from_sdk(C::InvitationRejected), None);
+        assert_eq!(MemberChange::from_sdk(C::Knocked), None);
+        assert_eq!(
+            serde_json::to_value(Line::Membership {
+                id: "1".into(),
+                name: "Bob".into(),
+                change: MemberChange::Joined,
+                timestamp: 5,
+            })
+            .unwrap(),
+            serde_json::json!({"type": "membership", "id": "1", "name": "Bob", "change": "joined", "timestamp": 5})
+        );
+    }
 
     #[test]
     fn fallback_name_is_the_localpart() {

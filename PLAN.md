@@ -97,7 +97,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 ### Phase 4: Chat Room window
 - [x] **4.1 Chat Room window.** Reuse the timeline component in a Chat Room layout for group rooms. *Done when:* a group opens as a Chat Room and a DM opens as an IM.
 - [x] **4.2 Member list.** Add a member pane with display names and icons. *Done when:* it updates when someone joins.
-- [ ] **4.3 Room events.** Show "X has entered/left the room" lines and the topic. *Done when:* changes made in Element appear in the window.
+- [x] **4.3 Room events.** Show "X has entered/left the room" lines and the topic. *Done when:* changes made in Element appear in the window.
 
 ### Phase 5: Encryption
 - [ ] **5.1 Encrypted rooms.** Confirm encrypted test rooms send and receive on this device. *Done when:* encrypted messages read and send both ways with Element.
@@ -132,6 +132,7 @@ Not tied to a step. Tick or remove them as they're dealt with.
 - [ ] **Script text shows in messages.** An incoming `<script>` tag is stripped, but its text (e.g. `alert(1)`) shows as plain text: matrix-sdk-ui's own cleaner drops the tag and keeps the text before ours runs. Harmless. To drop it, clean the raw event's `formatted_body` ourselves (`latest_json()`), minding edits and local echoes.
 - [ ] **No full-size image viewer.** Images show a thumbnail; 3.9 makes them savable, but there's no way to view one full size in the app.
 - [ ] **Videos and audio show as files.** No thumbnail or player yet.
+- [ ] **Slash commands are sent as text.** Typing `/me`, `/invite @bob:localhost`, `/topic …` etc. in AIMtrix sends it as a plain message. Handle at least `/me` (emote), `/topic` and `/invite`, and refuse unknown commands instead of sending them (`//` to send a literal slash).
 - [ ] **Links in messages don't open.** Clicking one does nothing (so it can't navigate the window away). Open them in the browser with the Tauri opener plugin.
 - [x] **Flaky timeline tests under the full parallel run.** Fixed in 3.9. Two causes: the room list syncs only 1 event per room, so a burst of messages reset open conversations to the newest few (rooms with an open window are now subscribed, getting up to 20 per sync); and tests found Bob's DM by name, sometimes picking another test's temporary room (they now find seeded rooms by their `aimtrix.seed` marker).
 - **Killed test runs leave debris.** A test stopped before its cleanup leaves rooms and invites on the test accounts, and tests that look rooms up by name can then pick the wrong one. Find rooms by ID or by the seed marker (`seed_room` in the tests), not by name, and clean up the accounts after killing a run.

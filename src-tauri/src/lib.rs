@@ -35,7 +35,7 @@ pub fn run() {
             commands::decline_invite,
             commands::open_room,
             commands::room_timeline,
-            commands::room_members,
+            commands::chat_room,
             commands::send_message,
             commands::load_older,
             commands::set_typing,

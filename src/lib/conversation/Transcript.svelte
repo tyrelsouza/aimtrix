@@ -6,7 +6,13 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { tick } from "svelte";
-  import { formatSize, watchTimeline, type Line, type Media } from "$lib/timeline";
+  import {
+    describeMemberChange,
+    formatSize,
+    watchTimeline,
+    type Line,
+    type Media,
+  } from "$lib/timeline";
   import { mxFormatting } from "$lib/compose";
 
   let {
@@ -170,6 +176,12 @@
   {#each shown as line (line.id)}
     {#if line.type === "start"}
       <p class="aim-msg aim-msg--system">This is the beginning of the conversation.</p>
+    {:else if line.type === "membership"}
+      <p class="aim-msg aim-msg--system" title={time(line.timestamp)}>{describeMemberChange(line.name, line.change)}</p>
+    {:else if line.type === "topic"}
+      <p class="aim-msg aim-msg--system" title={time(line.timestamp)}>
+        {line.topic === null ? `${line.name} removed the topic.` : `${line.name} changed the topic to: ${line.topic}`}
+      </p>
     {:else if line.type === "deleted"}
       <div class="aim-msg" title={time(line.timestamp)}>
         <span class="aim-msg__name" class:aim-msg__name--self={line.own} class:aim-msg__name--buddy={!line.own}>{line.name}:</span>

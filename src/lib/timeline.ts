@@ -30,9 +30,32 @@ export type Line =
     }
   /** A deleted message. */
   | { type: "deleted"; id: string; name: string; own: boolean; timestamp: number }
+  /** Someone entered or left the room, or was invited, removed or banned. */
+  | { type: "membership"; id: string; name: string; change: MemberChange; timestamp: number }
+  /** `name` set the topic, or removed it if `topic` is null. */
+  | { type: "topic"; id: string; name: string; topic: string | null; timestamp: number }
   /** The room's first event is loaded: there's no more history. */
   | { type: "start"; id: string }
   | { type: "other"; id: string };
+
+/** Mirrors `MemberChange` in src-tauri/src/matrix/timeline.rs. */
+export type MemberChange = "joined" | "left" | "invited" | "kicked" | "banned";
+
+/** "Bob Brown has entered the room." */
+export function describeMemberChange(name: string, change: MemberChange): string {
+  switch (change) {
+    case "joined":
+      return `${name} has entered the room.`;
+    case "left":
+      return `${name} has left the room.`;
+    case "invited":
+      return `${name} was invited.`;
+    case "kicked":
+      return `${name} was removed from the room.`;
+    case "banned":
+      return `${name} was banned from the room.`;
+  }
+}
 
 /** Mirrors `Media` in src-tauri/src/matrix/timeline.rs. */
 export type Media = {

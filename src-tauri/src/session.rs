@@ -13,7 +13,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::{
     matrix::{
         self, Session, Signed,
-        members::{self, Member},
+        members::{self, ChatRoom},
         rooms::{self, Buddy},
         sync::{self, Status},
         timeline::{self, Line},
@@ -106,25 +106,39 @@ pub async fn watch_timeline(
     Ok(lines)
 }
 
-/// Follow who's in a room for its Chat Room window, replacing any earlier
-/// watch. Returns the members now; changes go to the window as the whole
-/// list in `room:<key>:members` events.
-pub async fn watch_members(
+/// Follow who's in a room and its topic for its Chat Room window,
+/// replacing any earlier watch. Returns them as they are now; changes go to
+/// the window as the whole member list in `room:<key>:members` events, and
+/// the new topic (or null) in `room:<key>:topic`.
+pub async fn watch_chat_room(
     app: &AppHandle,
     client: &Client,
     room_id: &str,
-) -> Result<Vec<Member>, String> {
+) -> Result<ChatRoom, String> {
     let key = windows::room_key(room_id);
-    let event = format!("room:{key}:members");
+    let members_event = format!("room:{key}:members");
+    let topic_event = format!("room:{key}:topic");
     let label = format!("{}{key}", windows::ROOM_LABEL_PREFIX);
-    let (first, watching) = members::watch(client, room_id, {
-        let app = app.clone();
-        move |members| {
-            if let Err(e) = app.emit_to(&label, &event, &members) {
-                eprintln!("Couldn't send who's in the room to its window: {e}");
+    let (first, watching) = members::watch(
+        client,
+        room_id,
+        {
+            let (app, label) = (app.clone(), label.clone());
+            move |members| {
+                if let Err(e) = app.emit_to(&label, &members_event, &members) {
+                    eprintln!("Couldn't send who's in the room to its window: {e}");
+                }
             }
-        }
-    })
+        },
+        {
+            let app = app.clone();
+            move |topic| {
+                if let Err(e) = app.emit_to(&label, &topic_event, &topic) {
+                    eprintln!("Couldn't send the topic to its window: {e}");
+                }
+            }
+        },
+    )
     .await?;
     app.state::<Session>()
         .members

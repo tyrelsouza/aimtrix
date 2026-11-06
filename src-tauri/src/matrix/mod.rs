@@ -1506,11 +1506,12 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "needs the dev homeserver"]
-    async fn member_list_updates_when_someone_joins() {
+    async fn chat_room_follows_members_topic_and_room_events() {
         use matrix_sdk::ruma::{
             api::client::room::create_room::v3::{Request, RoomPreset},
             user_id,
         };
+        use timeline::{Line, MemberChange};
 
         let dir = tempfile::tempdir().unwrap();
         let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
@@ -1529,38 +1530,82 @@ mod tests {
             .set_room_subscriptions(&[&room_id])
             .await;
 
-        let (tx, mut changes) = tokio::sync::mpsc::unbounded_channel();
-        let (first, watching) = members::watch(&alice, room_id.as_str(), move |m| {
-            let _ = tx.send(m);
-        })
+        let (tx, mut member_changes) = tokio::sync::mpsc::unbounded_channel();
+        let (topic_tx, mut topic_changes) = tokio::sync::mpsc::unbounded_channel();
+        let (first, watching) = members::watch(
+            &alice,
+            room_id.as_str(),
+            move |m| {
+                let _ = tx.send(m);
+            },
+            move |t| {
+                let _ = topic_tx.send(t);
+            },
+        )
         .await
         .unwrap();
+        let (mut lines, timeline, mut diffs) = watch_lines(&alice, room_id.as_str()).await;
         let names = |m: &[members::Member]| m.iter().map(|m| m.name.clone()).collect::<Vec<_>>();
-        assert_eq!(names(&first), ["Alice Anderson"]);
-        assert!(first[0].own);
+        assert_eq!(names(&first.members), ["Alice Anderson"]);
+        assert!(first.members[0].own);
+        assert_eq!(first.topic, None);
+
+        let wait_for_members = async |rx: &mut tokio::sync::mpsc::UnboundedReceiver<_>,
+                                      count: usize| {
+            tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                loop {
+                    let members: Vec<members::Member> = rx.recv().await.expect("watch stopped");
+                    if members.len() == count {
+                        break members;
+                    }
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("the member list never had {count} people"))
+        };
+        let has = |lines: &[Line], who: &str, what: MemberChange| {
+            lines.iter().any(|l| {
+                matches!(l, Line::Membership { name, change, .. } if name == who && *change == what)
+            })
+        };
 
         let bob_dir = tempfile::tempdir().unwrap();
         let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
             .await
             .unwrap();
         bob.join_room_by_id(&room_id).await.unwrap();
-
-        let joined = tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            loop {
-                let members = changes.recv().await.expect("watch stopped");
-                if members.len() == 2 {
-                    break members;
-                }
-            }
-        })
-        .await
-        .expect("Bob never showed up in the member list");
+        let joined = wait_for_members(&mut member_changes, 2).await;
         assert_eq!(names(&joined), ["Alice Anderson", "Bob Brown"]);
         assert!(!joined[1].own);
+        wait_for_lines(&mut lines, &mut diffs, "Bob entering", |l| {
+            has(l, "Bob Brown", MemberChange::Joined)
+        })
+        .await;
+        assert!(has(&lines, "Bob Brown", MemberChange::Invited));
 
-        // Clean up: both leave the test room.
+        room.set_room_topic("  test topic  ").await.unwrap();
+        let topic = tokio::time::timeout(std::time::Duration::from_secs(30), topic_changes.recv())
+            .await
+            .expect("the topic never changed");
+        assert_eq!(topic, Some(Some("test topic".to_owned())));
+        wait_for_lines(&mut lines, &mut diffs, "the topic line", |l| {
+            l.iter().any(|l| {
+                matches!(l, Line::Topic { name, topic: Some(t), .. }
+                    if name == "Alice Anderson" && t == "test topic")
+            })
+        })
+        .await;
+
         bob.get_room(&room_id).unwrap().leave().await.unwrap();
+        wait_for_members(&mut member_changes, 1).await;
+        wait_for_lines(&mut lines, &mut diffs, "Bob leaving", |l| {
+            has(l, "Bob Brown", MemberChange::Left)
+        })
+        .await;
+
+        // Clean up: Alice leaves too.
         bob.logout().await.unwrap();
+        drop(timeline);
         drop(watching);
         room.leave().await.unwrap();
         syncing.stop().await;

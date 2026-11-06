@@ -1,8 +1,9 @@
-//! Who's in a room, for the Chat Room's member list.
+//! Who's in a room and its topic, for the Chat Room window.
 //!
-//! [`watch`] sends the whole list again whenever a member event arrives
-//! (someone joins, leaves or changes their name or avatar) and when a
-//! Buddy Icon finishes downloading. Lists are small, so there's no diffing.
+//! [`watch`] sends the whole member list again whenever a member event
+//! arrives (someone joins, leaves or changes their name or avatar) and when
+//! a Buddy Icon finishes downloading. Lists are small, so there's no
+//! diffing. The topic is sent when it changes.
 
 use std::sync::Arc;
 
@@ -29,14 +30,24 @@ pub struct Member {
     pub icon: Option<String>,
 }
 
-/// Follow who's in `room_id`. Returns the current members; every later
-/// change goes to `on_change` as the whole list, until the [`Watching`] is
+/// A Chat Room's people and topic, as the window first shows them.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ChatRoom {
+    pub members: Vec<Member>,
+    /// `None` if the room has none.
+    pub topic: Option<String>,
+}
+
+/// Follow who's in `room_id` and its topic. Returns them as they are now;
+/// later, every change of members goes to `on_members` as the whole list,
+/// and every change of topic to `on_topic`, until the [`Watching`] is
 /// dropped.
 pub async fn watch(
     client: &Client,
     room_id: &str,
-    on_change: impl Fn(Vec<Member>) + Send + 'static,
-) -> Result<(Vec<Member>, Watching), String> {
+    on_members: impl Fn(Vec<Member>) + Send + 'static,
+    on_topic: impl Fn(Option<String>) + Send + 'static,
+) -> Result<(ChatRoom, Watching), String> {
     let room_id = RoomId::parse(room_id).map_err(|e| format!("Bad room ID: {e}"))?;
     let room = match client.get_room(&room_id) {
         Some(room) if room.state() == RoomState::Joined => room,
@@ -53,22 +64,38 @@ pub async fn watch(
     let (ready, mut icons_ready) = unbounded_channel();
     let icons = Icons::new(client.clone(), ready);
 
-    let first = match list(&room, &icons).await {
-        Ok(first) => first,
+    let mut info = room.subscribe_info();
+    let members = match list(&room, &icons).await {
+        Ok(members) => members,
         Err(e) => {
             client.remove_event_handler(handler);
             return Err(e);
         }
+    };
+    let mut topic = topic_of(room.topic());
+    let first = ChatRoom {
+        members,
+        topic: topic.clone(),
     };
     let task = spawn(async move {
         loop {
             tokio::select! {
                 Some(()) = changes.recv() => drain(&mut changes),
                 Some(()) = icons_ready.recv() => drain(&mut icons_ready),
+                Some(new) = info.next() => {
+                    // Room info changes often (unread counts…); only a new
+                    // topic matters here.
+                    let new = topic_of(new.topic().map(ToOwned::to_owned));
+                    if new != topic {
+                        topic.clone_from(&new);
+                        on_topic(new);
+                    }
+                    continue;
+                }
                 else => break,
             }
             match list(&room, &icons).await {
-                Ok(members) => on_change(members),
+                Ok(members) => on_members(members),
                 Err(e) => eprintln!("{e}"),
             }
         }
@@ -81,6 +108,11 @@ pub async fn watch(
             task,
         },
     ))
+}
+
+/// A topic worth showing: blank ones count as none.
+fn topic_of(topic: Option<String>) -> Option<String> {
+    topic.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
 }
 
 /// Skip changes that queued up meanwhile: one new list covers them all.
@@ -162,6 +194,13 @@ mod tests {
         sort(&mut members);
         let ids: Vec<_> = members.iter().map(|m| m.user_id.as_str()).collect();
         assert_eq!(ids, ["@a:x", "@b1:x", "@b2:x", "@c:x"]);
+    }
+
+    #[test]
+    fn blank_topics_count_as_none() {
+        assert_eq!(topic_of(None), None);
+        assert_eq!(topic_of(Some("  ".into())), None);
+        assert_eq!(topic_of(Some(" hi \n".into())), Some("hi".into()));
     }
 
     #[test]

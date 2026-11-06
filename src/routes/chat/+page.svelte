@@ -3,7 +3,7 @@
   import { page } from "$app/state";
   import { watchBuddyList } from "$lib/buddylist";
   import { watchTyping } from "$lib/timeline";
-  import { describeCount, watchMembers, type Member } from "$lib/members";
+  import { describeCount, watchChatRoom, type Member } from "$lib/chatroom";
   import { DEFAULT_DM_ICON } from "$lib/icons";
   import Transcript from "$lib/conversation/Transcript.svelte";
   import Compose from "$lib/conversation/Compose.svelte";
@@ -21,6 +21,7 @@
   let typing = $state<string[]>([]);
   /** Null until loaded. */
   let members = $state<Member[] | null>(null);
+  let topic = $state<string | null>(null);
 
   // Keep the name and unread state current.
   $effect(() =>
@@ -35,9 +36,10 @@
   $effect(() => watchTyping((names) => (typing = names)));
 
   $effect(() =>
-    watchMembers(
+    watchChatRoom(
       roomId,
       (m) => (members = m),
+      (t) => (topic = t),
       (e) => (error = e),
     ),
   );
@@ -45,6 +47,9 @@
 
 <div class="layout">
   <main class="aim-window__body">
+    {#if topic}
+      <p class="topic" title={topic}><b>Topic:</b> {topic}</p>
+    {/if}
     <div class="row grow">
       <Transcript {roomId} {unread} bind:loading bind:saving bind:notice bind:error />
       <section class="members" aria-label="People in this room">
@@ -90,6 +95,12 @@
   .row.grow {
     flex: 1;
     min-height: 0;
+  }
+  .topic {
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .members {
     display: flex;

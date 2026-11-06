@@ -2,7 +2,7 @@
 
 What changed in each phase of `PLAN.md`, step by step. Open problems live under "Known issues and follow-ups" in `PLAN.md`.
 
-## Phase 4: Chat Room window (in progress)
+## Phase 4: Chat Room window
 
 ### Changes
 - **4.1 Chat Room window.** Group rooms now open in a Chat Room window (`/chat`, titled "*Name* - Chat Room", 540×400 to leave space for the member list). DMs still open as IMs. `windows::open_room` chooses the window from the room's DM/group kind.
@@ -12,9 +12,9 @@ What changed in each phase of `PLAN.md`, step by step. Open problems live under 
 - **4.2 Member list.** The Chat Room has a member pane on the right with the count ("3 people here") and each member's Buddy Icon and display name, sorted by name. It updates live when someone joins or leaves, or changes their name or avatar.
   - `matrix/members.rs` loads the joined members and resends the whole list as a `room:<key>:members` event on every member event and whenever an icon finishes downloading. Windows fetch the first list with the `room_members` command.
   - The watch stops when the window closes or you sign off.
-
-### Still to do
-- 4.3 Room events ("has entered/left the room", topic).
+- **4.3 Room events.** The conversation shows system lines for room events: "*Name* has entered the room.", "has left the room.", "was invited.", "was removed from the room." and "was banned from the room.", plus "*Name* changed the topic to: …" and "removed the topic." The Chat Room shows the current topic in a bar at the top, updated live. The lines show in IM windows too, since both share the transcript.
+  - `timeline.rs` has new `Membership` and `Topic` lines. Accepted invites count as entering; declined invites and knocks get no line.
+  - The Chat Room watcher (`members.rs`) now follows the topic as well. The `room_members` command became `chat_room`, which returns members and topic; topic changes arrive as `room:<key>:topic` events. The frontend helper is `watchChatRoom` in `src/lib/chatroom.ts` (was `members.ts`).
 
 ## Phase 3: IM window
 
