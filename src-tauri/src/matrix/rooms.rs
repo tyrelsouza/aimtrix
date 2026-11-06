@@ -8,7 +8,10 @@ use std::sync::Arc;
 
 use eyeball_im::Vector;
 use futures_util::StreamExt;
-use matrix_sdk::{Client, Room, RoomState, ruma::RoomId};
+use matrix_sdk::{
+    Client, Room, RoomState,
+    ruma::{OwnedMxcUri, RoomId},
+};
 use matrix_sdk_ui::room_list_service::{
     RoomListItem, RoomListService, filters::new_filter_non_left,
 };
@@ -16,7 +19,7 @@ use serde::Serialize;
 use tauri::async_runtime::{JoinHandle, spawn};
 use tokio::sync::mpsc::unbounded_channel;
 
-use super::media::Icons;
+use super::media::{self, Icons};
 
 /// Room tag that forces a room to be shown as a Chat Room, even if it looks
 /// like a DM.
@@ -171,16 +174,7 @@ async fn buddy(room: &RoomListItem, icons: &Arc<Icons>) -> Option<Buddy> {
         chat_tag,
     };
     let kind = kind(&facts);
-    // A DM without its own avatar shows the other person's.
-    let avatar = match (room.avatar_url(), kind) {
-        (Some(url), _) => Some(url),
-        (None, Kind::Dm) => room
-            .heroes()
-            .await
-            .into_iter()
-            .find_map(|hero| hero.avatar_url),
-        (None, Kind::Group) => None,
-    };
+    let avatar = avatar(room, kind).await;
     Some(Buddy {
         room_id: room.room_id().to_string(),
         name: room
@@ -192,6 +186,36 @@ async fn buddy(room: &RoomListItem, icons: &Arc<Icons>) -> Option<Buddy> {
         unread: room.num_unread_messages() > 0 || room.is_marked_unread(),
         icon: avatar.and_then(|mxc| icons.get(&mxc)),
     })
+}
+
+/// The avatar a room shows as its Buddy Icon. A DM without its own avatar
+/// shows the other person's.
+async fn avatar(room: &Room, kind: Kind) -> Option<OwnedMxcUri> {
+    match (room.avatar_url(), kind) {
+        (Some(url), _) => Some(url),
+        (None, Kind::Dm) => room
+            .heroes()
+            .await
+            .into_iter()
+            .find_map(|hero| hero.avatar_url),
+        (None, Kind::Group) => None,
+    }
+}
+
+/// A Buddy List room's icon at `size` px, as a `data:` URL, or `None` for
+/// the default icon.
+pub async fn icon(client: &Client, buddy: &Buddy, size: u32) -> Result<Option<String>, String> {
+    let room_id = RoomId::parse(&buddy.room_id).map_err(|e| format!("Bad room ID: {e}"))?;
+    let room = client
+        .get_room(&room_id)
+        .ok_or_else(|| "That room isn't on your Buddy List.".to_owned())?;
+    match avatar(&room, buddy.kind).await {
+        Some(mxc) => media::icon(client, &mxc, size)
+            .await
+            .map(Some)
+            .map_err(|e| format!("Couldn't fetch the Buddy Icon: {e}")),
+        None => Ok(None),
+    }
 }
 
 /// Accept an invite. The room moves out of Invitations on the next update;

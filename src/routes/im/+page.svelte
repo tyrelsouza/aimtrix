@@ -6,6 +6,7 @@
   import { watchBuddyList } from "$lib/buddylist";
   import { describeTyping, watchTimeline, watchTyping, type Line } from "$lib/timeline";
   import { COLORS, mxFormatting, serialize } from "$lib/compose";
+  import { DEFAULT_CHAT_ICON, DEFAULT_DM_ICON } from "$lib/icons";
 
   const roomId = page.url.searchParams.get("room") ?? "";
   let name = $state("");
@@ -32,12 +33,56 @@
   const shown = $derived(lines.filter((l) => l.type === "message" || l.type === "start"));
   const atStart = $derived(noMore || lines.some((l) => l.type === "start"));
 
-  // Keep the name current if the room is renamed.
+  let kind = $state<"dm" | "group">("dm");
+  /** Has messages you haven't read, per the Buddy List. */
+  let unread = $state(false);
+  let buddyIcon = $state<string | null>(null);
+  let myIcon = $state<string | null>(null);
+  /** The Buddy List's (small) icon, to notice when it changes. */
+  let listIcon: string | null | undefined;
+  let focused = $state(document.hasFocus());
+
+  // Keep the name, icon and unread state current.
   $effect(() =>
     watchBuddyList((buddies) => {
-      name = buddies.find((b) => b.roomId === roomId)?.name ?? name;
+      const buddy = buddies.find((b) => b.roomId === roomId);
+      if (!buddy) return;
+      name = buddy.name;
+      kind = buddy.kind;
+      unread = buddy.unread;
+      if (buddy.icon !== listIcon) {
+        listIcon = buddy.icon;
+        loadBuddyIcon();
+      }
     }),
   );
+
+  invoke<string | null>("my_icon")
+    .then((icon) => (myIcon = icon))
+    .catch((e) => console.warn("Couldn't load your Buddy Icon:", e));
+
+  async function loadBuddyIcon() {
+    try {
+      buddyIcon = await invoke<string | null>("room_icon", { roomId });
+    } catch (e) {
+      console.warn("Couldn't load the Buddy Icon:", e);
+    }
+  }
+
+  // Mark the room read while you're looking at it: when the window gets
+  // focus, and when messages arrive while it has it. Waits a moment so a
+  // burst of updates sends one receipt.
+  let readTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    void shown.length;
+    if (!focused || !unread) return;
+    clearTimeout(readTimer);
+    readTimer = setTimeout(() => {
+      invoke("mark_read", { roomId }).catch((e) =>
+        console.warn("Couldn't mark the conversation read:", e),
+      );
+    }, 300);
+  });
 
   $effect(() =>
     watchTimeline(
@@ -210,19 +255,27 @@
 </script>
 
 <svelte:document onselectionchange={selectionChanged} />
+<svelte:window onfocus={() => (focused = true)} onblur={() => (focused = false)} />
 
 <div class="layout">
   <main class="aim-window__body">
-    <div class="aim-panel aim-transcript" bind:this={transcript} onscroll={scrolled}>
-      {#each shown as line (line.id)}
-        {#if line.type === "start"}
-          <p class="aim-msg aim-msg--system">This is the beginning of the conversation.</p>
-        {:else if line.type === "message"}
-          <!-- One line: plain messages keep whitespace, so markup spacing would show.
-               The HTML was cleaned by the Rust core. -->
-          <div class="aim-msg" title={time(line.timestamp)}><span class="aim-msg__name" class:aim-msg__name--self={line.own} class:aim-msg__name--buddy={!line.own}>{line.emote ? `* ${line.name}` : `${line.name}:`}</span> {#if line.html}<span class="aim-msg__html" use:mxFormatting={line.html}>{@html line.html}</span>{:else}<span class="aim-msg__text">{line.body}</span>{/if}{#if line.failed}<span class="aim-msg__note"> (not sent)</span>{/if}</div>
-        {/if}
-      {/each}
+    <div class="row grow">
+      <div class="aim-panel aim-transcript" bind:this={transcript} onscroll={scrolled}>
+        {#each shown as line (line.id)}
+          {#if line.type === "start"}
+            <p class="aim-msg aim-msg--system">This is the beginning of the conversation.</p>
+          {:else if line.type === "message"}
+            <!-- One line: plain messages keep whitespace, so markup spacing would show.
+                 The HTML was cleaned by the Rust core. -->
+            <div class="aim-msg" title={time(line.timestamp)}><span class="aim-msg__name" class:aim-msg__name--self={line.own} class:aim-msg__name--buddy={!line.own}>{line.emote ? `* ${line.name}` : `${line.name}:`}</span> {#if line.html}<span class="aim-msg__html" use:mxFormatting={line.html}>{@html line.html}</span>{:else}<span class="aim-msg__text">{line.body}</span>{/if}{#if line.failed}<span class="aim-msg__note"> (not sent)</span>{/if}</div>
+          {/if}
+        {/each}
+      </div>
+      <img
+        class="aim-buddy-icon"
+        src={buddyIcon ?? (kind === "dm" ? DEFAULT_DM_ICON : DEFAULT_CHAT_ICON)}
+        alt="{name}'s Buddy Icon"
+      />
     </div>
     {#if error}
       <p class="aim-alert" role="alert">{error}</p>
@@ -252,19 +305,22 @@
           {/if}
         </div>
       </div>
-      <div
-        class="aim-field editor"
-        contenteditable="true"
-        role="textbox"
-        tabindex="0"
-        aria-multiline="true"
-        aria-label="Message"
-        bind:this={editor}
-        onkeydown={keydown}
-        oninput={edited}
-        onpaste={paste}
-        ondrop={(e) => e.preventDefault()}
-      ></div>
+      <div class="row">
+        <div
+          class="aim-field editor"
+          contenteditable="true"
+          role="textbox"
+          tabindex="0"
+          aria-multiline="true"
+          aria-label="Message"
+          bind:this={editor}
+          onkeydown={keydown}
+          oninput={edited}
+          onpaste={paste}
+          ondrop={(e) => e.preventDefault()}
+        ></div>
+        <img class="aim-buddy-icon" src={myIcon ?? DEFAULT_DM_ICON} alt="Your Buddy Icon" />
+      </div>
       <div class="buttons">
         <button class="aim-btn is-default" disabled={!draft.trim()}>Send</button>
       </div>
@@ -290,9 +346,17 @@
     display: flex;
     flex-direction: column;
   }
-  .aim-transcript {
+  .row {
+    display: flex;
+    gap: 6px;
+  }
+  .row.grow {
     flex: 1;
     min-height: 0;
+  }
+  .aim-transcript {
+    flex: 1;
+    min-width: 0;
     overflow-y: auto;
   }
   .aim-msg__text {
@@ -305,6 +369,8 @@
     gap: 6px;
   }
   .editor {
+    flex: 1;
+    min-width: 0;
     /* About three lines, then it scrolls. */
     height: 4.6em;
     overflow-y: auto;

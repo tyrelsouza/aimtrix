@@ -2,7 +2,7 @@
 
 mod html;
 mod keyring;
-mod media;
+pub mod media;
 pub mod rooms;
 pub mod sync;
 pub mod timeline;
@@ -1055,5 +1055,111 @@ mod tests {
             syncing.stop().await;
             client.logout().await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn reading_clears_the_bold() {
+        let dir = tempfile::tempdir().unwrap();
+        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+            .await
+            .unwrap();
+        let syncing = sync::start(&alice, |_| {}).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let list = rooms::watch(syncing.room_list_service(), move |b| {
+            let _ = tx.send(b);
+        });
+        let room_id = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        wait_for_buddies(&mut rx, "Bob's DM", {
+            let room_id = room_id.clone();
+            move |b| match find(b, "Bob Brown") {
+                Some((_, bob)) => {
+                    *room_id.lock().unwrap() = bob.room_id.clone();
+                    true
+                }
+                None => false,
+            }
+        })
+        .await;
+        let room_id = room_id.lock().unwrap().clone();
+        let (mut lines, watching, mut diffs) = watch_lines(&alice, &room_id).await;
+        let unread = |want: bool| {
+            move |b: &[rooms::Buddy]| {
+                find(b, "Bob Brown").is_some_and(|(_, bob)| bob.unread == want)
+            }
+        };
+
+        // Start from read, whatever earlier tests left.
+        watching.mark_read().await.unwrap();
+        wait_for_buddies(&mut rx, "Bob read", unread(false)).await;
+
+        let body = format!("read test {}", rand::random::<u32>());
+        send_as("bob", &room_id, &body).await;
+        wait_for_buddies(&mut rx, "Bob bold", unread(true)).await;
+        // Reading marks up to the latest message, so wait until it's here.
+        wait_for_lines(&mut lines, &mut diffs, "Bob's message", |l| {
+            said(l, "Bob Brown", &body, false)
+        })
+        .await;
+        watching.mark_read().await.unwrap();
+        wait_for_buddies(&mut rx, "Bob read again", unread(false)).await;
+
+        drop(watching);
+        list.abort();
+        syncing.stop().await;
+        alice.logout().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn icon_pane_gets_bigger_icons() {
+        let dir = tempfile::tempdir().unwrap();
+        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+            .await
+            .unwrap();
+        let syncing = sync::start(&alice, |_| {}).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let list = rooms::watch(syncing.room_list_service(), move |b| {
+            let _ = tx.send(b);
+        });
+        let buddies = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        wait_for_buddies(&mut rx, "Test Chat, Bob and Carol", {
+            let buddies = buddies.clone();
+            move |b| {
+                *buddies.lock().unwrap() = b.to_vec();
+                ["Test Chat", "Bob Brown", "Carol Chen"]
+                    .iter()
+                    .all(|name| find(b, name).is_some())
+            }
+        })
+        .await;
+        let buddies = buddies.lock().unwrap().clone();
+        let icon = |name: &str| {
+            let buddy = find(&buddies, name).unwrap().1.clone();
+            let alice = alice.clone();
+            async move { rooms::icon(&alice, &buddy, 96).await.unwrap() }
+        };
+        // Seeded avatars: Test Chat its own, Bob's DM his; Carol has none.
+        for name in ["Test Chat", "Bob Brown"] {
+            let icon = icon(name).await;
+            assert!(
+                icon.as_deref()
+                    .is_some_and(|i| i.starts_with("data:image/png;base64,")),
+                "{name}: {icon:?}"
+            );
+        }
+        assert_eq!(icon("Carol Chen").await, None);
+
+        let mine = alice.account().get_avatar_url().await.unwrap().unwrap();
+        assert!(
+            media::icon(&alice, &mine, 96)
+                .await
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
+
+        list.abort();
+        syncing.stop().await;
+        alice.logout().await.unwrap();
     }
 }

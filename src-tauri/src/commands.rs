@@ -5,13 +5,17 @@ use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::{
     matrix::{
-        self, Session,
+        self, Session, media,
         rooms::{self, Buddy, Section},
         sync::Status,
         timeline::Line,
     },
     session, windows,
 };
+
+/// Buddy Icons in the IM window are 48 px; 96 stays sharp on high-DPI
+/// screens.
+const ICON_PANE_SIZE: u32 = 96;
 
 /// Sign on, start syncing, open the Buddy List, and close the Sign On window
 /// that called this. Returns the user ID, e.g. `@alice:localhost`.
@@ -145,6 +149,46 @@ pub async fn load_older(app: AppHandle, room_id: String) -> Result<bool, String>
 #[tauri::command]
 pub async fn set_typing(app: AppHandle, room_id: String, typing: bool) -> Result<(), String> {
     session::set_typing(&app, &room_id, typing).await
+}
+
+/// Mark a room read from its IM window, while you're looking at it. The
+/// Buddy List un-bolds it on the next update.
+#[tauri::command]
+pub async fn mark_read(app: AppHandle, room_id: String) -> Result<(), String> {
+    session::mark_read(&app, &room_id).await
+}
+
+/// A room's Buddy Icon, big enough for the IM window's icon pane, as a
+/// `data:` URL, or `None` for the default.
+#[tauri::command]
+pub async fn room_icon(
+    session: State<'_, Session>,
+    room_id: String,
+) -> Result<Option<String>, String> {
+    let buddy = session
+        .buddies
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|b| b.room_id == room_id)
+        .cloned()
+        .ok_or_else(|| "That room isn't on your Buddy List.".to_owned())?;
+    rooms::icon(&client(&session).await?, &buddy, ICON_PANE_SIZE).await
+}
+
+/// Your own Buddy Icon as a `data:` URL, or `None` for the default.
+#[tauri::command]
+pub async fn my_icon(session: State<'_, Session>) -> Result<Option<String>, String> {
+    let client = client(&session).await?;
+    let mxc = match client.account().get_avatar_url().await {
+        Ok(Some(mxc)) => mxc,
+        Ok(None) => return Ok(None),
+        Err(e) => return Err(format!("Couldn't look up your Buddy Icon: {e}")),
+    };
+    media::icon(&client, &mxc, ICON_PANE_SIZE)
+        .await
+        .map(Some)
+        .map_err(|e| format!("Couldn't fetch your Buddy Icon: {e}"))
 }
 
 /// The signed-on client. Cloned so the session isn't locked while it's used.

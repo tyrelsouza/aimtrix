@@ -12,6 +12,7 @@ use matrix_sdk::{
     Client, Room, RoomState,
     ruma::{
         OwnedUserId, RoomId, UserId,
+        api::client::receipt::create_receipt::v3::ReceiptType,
         events::room::message::{MessageFormat, MessageType, RoomMessageEventContent},
     },
 };
@@ -160,6 +161,16 @@ async fn names(room: &Room, users: &[OwnedUserId]) -> Vec<String> {
 }
 
 impl Watching {
+    /// Mark everything up to the latest message read, which also clears a
+    /// "marked unread" flag. Does nothing if it's already read.
+    pub async fn mark_read(&self) -> Result<(), String> {
+        self.timeline
+            .mark_as_read(ReceiptType::Read)
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("Couldn't mark the conversation read: {e}"))
+    }
+
     /// Load a page of older history; it arrives as diffs. Returns whether
     /// the start of the room was reached.
     pub async fn load_older(&self) -> Result<bool, String> {

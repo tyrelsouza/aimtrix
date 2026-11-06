@@ -13,7 +13,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use matrix_sdk::{
     Client,
     media::{MediaFormat, MediaRequestParameters, MediaThumbnailSettings},
-    ruma::{OwnedMxcUri, events::room::MediaSource, uint},
+    ruma::{OwnedMxcUri, events::room::MediaSource},
 };
 use tauri::async_runtime::spawn;
 use tokio::sync::mpsc::UnboundedSender;
@@ -59,22 +59,23 @@ impl Icons {
     }
 
     async fn fetch(&self, mxc: &OwnedMxcUri) -> matrix_sdk::Result<String> {
-        let request = MediaRequestParameters {
-            source: MediaSource::Plain(mxc.clone()),
-            // Shown at 16 px; 32 px stays sharp on high-DPI screens.
-            format: MediaFormat::Thumbnail(MediaThumbnailSettings::new(uint!(32), uint!(32))),
-        };
-        let bytes = self
-            .client
-            .media()
-            .get_media_content(&request, true)
-            .await?;
-        Ok(format!(
-            "data:{};base64,{}",
-            image_type(&bytes),
-            STANDARD.encode(&bytes)
-        ))
+        // Shown at 16 px; 32 px stays sharp on high-DPI screens.
+        icon(&self.client, mxc, 32).await
     }
+}
+
+/// An avatar as a `data:` URL, thumbnailed to `size` px square.
+pub async fn icon(client: &Client, mxc: &OwnedMxcUri, size: u32) -> matrix_sdk::Result<String> {
+    let request = MediaRequestParameters {
+        source: MediaSource::Plain(mxc.clone()),
+        format: MediaFormat::Thumbnail(MediaThumbnailSettings::new(size.into(), size.into())),
+    };
+    let bytes = client.media().get_media_content(&request, true).await?;
+    Ok(format!(
+        "data:{};base64,{}",
+        image_type(&bytes),
+        STANDARD.encode(&bytes)
+    ))
 }
 
 /// The image type, from the file's first bytes.

@@ -125,6 +125,11 @@ pub async fn set_typing(app: &AppHandle, room_id: &str, typing: bool) -> Result<
     watching(app, room_id)?.set_typing(typing).await
 }
 
+/// Mark a room whose window is open read.
+pub async fn mark_read(app: &AppHandle, room_id: &str) -> Result<(), String> {
+    watching(app, room_id)?.mark_read().await
+}
+
 /// Load older history in a room whose window is open. Returns whether the
 /// start of the room was reached.
 pub async fn load_older(app: &AppHandle, room_id: &str) -> Result<bool, String> {
