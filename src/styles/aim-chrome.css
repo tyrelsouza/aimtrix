@@ -27,6 +27,7 @@
   --c-im-self: #e00000;
   --c-im-buddy: #0000e0;
   --c-im-system: #808080;
+  --c-link: #0000ee;
   --c-away: #808080;
 
   --font-ui: Tahoma, "MS Sans Serif", "Segoe UI", "Liberation Sans", "DejaVu Sans", sans-serif;
@@ -250,6 +251,34 @@ body {
   box-shadow: var(--bevel-thin-sunken);
 }
 
+/* Color picker that drops down from a toolbar button. */
+.aim-palette {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: repeat(4, 16px);
+  gap: 3px;
+  padding: 4px;
+  background: var(--c-face);
+  box-shadow: var(--bevel-raised);
+}
+
+.aim-palette__swatch {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  box-shadow: var(--bevel-thin-sunken);
+}
+
+.aim-palette__swatch:hover,
+.aim-palette__swatch:focus-visible {
+  outline: 1px solid var(--c-text);
+  outline-offset: 1px;
+}
+
 /* ---------- Text fields ---------- */
 
 .aim-field {
@@ -461,6 +490,48 @@ button.aim-list__item:focus-visible {
 .aim-msg__note {
   color: var(--c-im-system);
   font-style: italic;
+}
+
+/* Formatted message text. Block tags from other clients stay compact. */
+.aim-msg__html :is(p, blockquote, pre, ul, ol, h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+}
+
+.aim-msg__html :is(h1, h2, h3, h4, h5, h6) {
+  font-size: inherit;
+}
+
+.aim-msg__html blockquote {
+  padding-left: 6px;
+  border-left: 2px solid var(--c-shadow);
+  color: var(--c-im-system);
+}
+
+.aim-msg__html :is(ul, ol) {
+  padding-left: 18px;
+}
+
+.aim-msg__html :is(code, pre) {
+  font-family: "Courier New", monospace;
+}
+
+.aim-msg__html pre {
+  white-space: pre-wrap;
+}
+
+.aim-msg__html a {
+  color: var(--c-link);
+}
+
+/* Spoilers stay hidden until hovered. */
+.aim-msg__html [data-mx-spoiler] {
+  background: var(--c-text);
+  color: var(--c-text);
+}
+
+.aim-msg__html [data-mx-spoiler]:hover {
+  background: none;
+  color: inherit;
 }
 
 .aim-msg--system {

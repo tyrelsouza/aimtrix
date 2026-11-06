@@ -109,9 +109,15 @@ pub fn unwatch_timeline(app: &AppHandle, room_id: &str) {
         .remove(room_id);
 }
 
-/// Send a plain-text message to a room whose window is open.
-pub async fn send_message(app: &AppHandle, room_id: &str, body: &str) -> Result<(), String> {
-    watching(app, room_id)?.send(body).await
+/// Send a message to a room whose window is open: plain text, plus
+/// optional formatted text.
+pub async fn send_message(
+    app: &AppHandle,
+    room_id: &str,
+    body: &str,
+    html: Option<&str>,
+) -> Result<(), String> {
+    watching(app, room_id)?.send(body, html).await
 }
 
 /// Tell a room whose window is open whether we're typing.

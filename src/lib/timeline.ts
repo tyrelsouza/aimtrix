@@ -10,7 +10,10 @@ export type Line =
       sender: string;
       name: string;
       own: boolean;
+      /** Plain text, always there. */
       body: string;
+      /** Formatted text, already cleaned by the Rust core, or null. */
+      html: string | null;
       emote: boolean;
       /** Ours, and the server didn't take it. */
       failed: boolean;

@@ -89,7 +89,7 @@ Work one step at a time, top to bottom. Each step is small enough for one sittin
 - [x] **3.3 Send.** Add the text box: Enter sends, Shift+Enter or Alt+Enter adds a new line. *Done when:* the message shows up in Element.
 - [x] **3.4 Scrollback.** Load older messages when you scroll up. *Done when:* you can reach the room's first message.
 - [x] **3.5 Typing.** Send typing notices and show "Name is typing…" in the status bar. *Done when:* it works in both directions with Element.
-- [ ] **3.6 Formatting.** Add a B/I/U and font-color toolbar that sends `formatted_body`, and render incoming HTML safely (sanitized). *Done when:* formatting survives a round trip with Element, and a `<script>` tag gets stripped.
+- [x] **3.6 Formatting.** Add a B/I/U and font-color toolbar that sends `formatted_body`, and render incoming HTML safely (sanitized). *Done when:* formatting survives a round trip with Element, and a `<script>` tag gets stripped.
 - [ ] **3.7 Buddy icon pane and read receipts.** Show the buddy icon pane and mark the room read when the window has focus. *Done when:* the bold in the Buddy List clears after reading.
 - [ ] **3.8 Other message types.** Handle images (thumbnails), files, edits, deletions (redactions) and basic replies. *Done when:* each type sent from Element shows up sensibly.
 
@@ -128,6 +128,8 @@ Not tied to a step. Tick or remove them as they're dealt with.
 - [ ] **Slow test logins.** Each login in a test takes about 5 s. The cause isn't confirmed; probably encryption and store setup in debug builds. Try `[profile.dev.package."*"] opt-level = 2` in `src-tauri/Cargo.toml` (slower first build).
 - [ ] **Buddy List may miss tag and `m.direct` changes.** Suspected, untested: adding or removing `aimtrix.chat`, or an `m.direct` change, may not move the room until something else in it changes.
 - [ ] **Recheck the SDK stop workaround when upgrading matrix-sdk.** In 0.19 a `SyncService::stop()` right after `start()` can lose the stop request and hang forever. `Syncing::stop` in `src-tauri/src/matrix/sync.rs` repeats the request every 100 ms. Drop the workaround once the SDK fixes this.
+- [ ] **Script text shows in messages.** An incoming `<script>` tag is stripped, but its text (e.g. `alert(1)`) shows as plain text: matrix-sdk-ui's own cleaner drops the tag and keeps the text before ours runs. Harmless. To drop it, clean the raw event's `formatted_body` ourselves (`latest_json()`), minding edits and local echoes.
+- [ ] **Links in messages don't open.** Clicking one does nothing (so it can't navigate the window away). Open them in the browser with the Tauri opener plugin.
 - **Killed test runs leave debris.** A test stopped before its cleanup leaves rooms and invites on the test accounts, and tests that look rooms up by name can then pick the wrong one. Find rooms by ID where possible, and clean up the accounts after killing a run.
 - **Dev server rate limits.** Synapse's newer `rc_room_creation` limit made room-creating tests stall for minutes. `dev/synapse/homeserver.yaml` now relaxes it with the other limits; relax any new limit Synapse adds the same way.
 

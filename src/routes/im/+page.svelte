@@ -5,14 +5,22 @@
   import { page } from "$app/state";
   import { watchBuddyList } from "$lib/buddylist";
   import { describeTyping, watchTimeline, watchTyping, type Line } from "$lib/timeline";
+  import { COLORS, mxFormatting, serialize } from "$lib/compose";
 
   const roomId = page.url.searchParams.get("room") ?? "";
   let name = $state("");
   let lines = $state<Line[]>([]);
   let error = $state("");
+  /** The editor's plain text, to know whether there's anything to send. */
   let draft = $state("");
   let transcript: HTMLDivElement;
-  let box: HTMLTextAreaElement;
+  let editor: HTMLDivElement;
+  /** Toolbar state at the cursor. */
+  let bold = $state(false);
+  let italic = $state(false);
+  let underline = $state(false);
+  let color = $state(COLORS[0][0]);
+  let paletteOpen = $state(false);
 
   /** Names of who's typing, not counting you. */
   let typing = $state<string[]>([]);
@@ -55,6 +63,9 @@
   );
 
   $effect(() => watchTyping((names) => (typing = names)));
+
+  // Ready to type when the window opens.
+  $effect(() => editor.focus());
 
   // Your own typing notice: started when you type, renewed while you keep
   // typing, and stopped when you send, clear the box or pause. The server
@@ -123,32 +134,73 @@
 
   /** Enter sends; Shift+Enter and Alt+Enter start a new line. */
   function keydown(e: KeyboardEvent) {
-    if (e.key !== "Enter" || e.isComposing || e.shiftKey) return;
+    if (e.key === "Escape" && paletteOpen) {
+      paletteOpen = false;
+      return;
+    }
+    if (e.key !== "Enter" || e.isComposing) return;
     e.preventDefault();
-    if (e.altKey) {
-      box.setRangeText("\n", box.selectionStart, box.selectionEnd, "end");
-      draft = box.value;
-      typed();
+    if (e.shiftKey || e.altKey) {
+      document.execCommand("insertLineBreak");
     } else {
       send();
     }
   }
 
+  function edited() {
+    draft = serialize(editor).body;
+    typed();
+  }
+
+  /** Paste as plain text, so outside styles don't come along. */
+  function paste(e: ClipboardEvent) {
+    e.preventDefault();
+    document.execCommand("insertText", false, e.clipboardData?.getData("text/plain") ?? "");
+  }
+
+  /** Keep the toolbar showing the formatting at the cursor. */
+  function selectionChanged() {
+    if (!editor?.contains(document.getSelection()?.anchorNode ?? null)) return;
+    bold = document.queryCommandState("bold");
+    italic = document.queryCommandState("italic");
+    underline = document.queryCommandState("underline");
+  }
+
+  function format(command: "bold" | "italic" | "underline") {
+    editor.focus();
+    document.execCommand(command);
+    selectionChanged();
+    edited();
+  }
+
+  function pickColor(hex: string) {
+    paletteOpen = false;
+    color = hex;
+    editor.focus();
+    document.execCommand("foreColor", false, hex);
+    edited();
+  }
+
   async function send(e?: SubmitEvent) {
     e?.preventDefault();
-    const body = draft;
+    const { body, html } = serialize(editor);
     if (!body.trim()) return;
+    const saved = editor.innerHTML;
     // Clear at once: the message shows up in the transcript straight away.
+    editor.innerHTML = "";
     draft = "";
     stopTyping();
     error = "";
-    box.focus();
+    editor.focus();
     try {
-      await invoke("send_message", { roomId, body });
+      await invoke("send_message", { roomId, body, html });
     } catch (err) {
       error = String(err);
       // Give the text back to retry, unless something new was typed.
-      if (!draft) draft = body;
+      if (!draft) {
+        editor.innerHTML = saved;
+        draft = body;
+      }
     }
   }
 
@@ -157,6 +209,8 @@
   }
 </script>
 
+<svelte:document onselectionchange={selectionChanged} />
+
 <div class="layout">
   <main class="aim-window__body">
     <div class="aim-panel aim-transcript" bind:this={transcript} onscroll={scrolled}>
@@ -164,8 +218,9 @@
         {#if line.type === "start"}
           <p class="aim-msg aim-msg--system">This is the beginning of the conversation.</p>
         {:else if line.type === "message"}
-          <!-- One line: the paragraph keeps whitespace, so markup spacing would show. -->
-          <p class="aim-msg" title={time(line.timestamp)}><span class="aim-msg__name" class:aim-msg__name--self={line.own} class:aim-msg__name--buddy={!line.own}>{line.emote ? `* ${line.name}` : `${line.name}:`}</span> {line.body}{#if line.failed}<span class="aim-msg__note"> (not sent)</span>{/if}</p>
+          <!-- One line: plain messages keep whitespace, so markup spacing would show.
+               The HTML was cleaned by the Rust core. -->
+          <div class="aim-msg" title={time(line.timestamp)}><span class="aim-msg__name" class:aim-msg__name--self={line.own} class:aim-msg__name--buddy={!line.own}>{line.emote ? `* ${line.name}` : `${line.name}:`}</span> {#if line.html}<span class="aim-msg__html" use:mxFormatting={line.html}>{@html line.html}</span>{:else}<span class="aim-msg__text">{line.body}</span>{/if}{#if line.failed}<span class="aim-msg__note"> (not sent)</span>{/if}</div>
         {/if}
       {/each}
     </div>
@@ -173,17 +228,43 @@
       <p class="aim-alert" role="alert">{error}</p>
     {/if}
     <form class="compose" onsubmit={send}>
-      <!-- svelte-ignore a11y_autofocus -->
-      <textarea
-        class="aim-field"
-        rows="3"
+      <!-- Buttons keep the editor's selection: mousedown would take focus. -->
+      <div class="aim-toolbar" role="toolbar" aria-label="Formatting">
+        <button type="button" class="aim-toolbar__btn" title="Bold" aria-pressed={bold}
+          onmousedown={(e) => e.preventDefault()} onclick={() => format("bold")}><b>B</b></button>
+        <button type="button" class="aim-toolbar__btn" title="Italic" aria-pressed={italic}
+          onmousedown={(e) => e.preventDefault()} onclick={() => format("italic")}><i>I</i></button>
+        <button type="button" class="aim-toolbar__btn" title="Underline" aria-pressed={underline}
+          onmousedown={(e) => e.preventDefault()} onclick={() => format("underline")}><u>U</u></button>
+        <span class="aim-toolbar__sep"></span>
+        <div class="color">
+          <button type="button" class="aim-toolbar__btn" title="Text color" aria-haspopup="true"
+            aria-expanded={paletteOpen} style:color={color}
+            onmousedown={(e) => e.preventDefault()} onclick={() => (paletteOpen = !paletteOpen)}>A</button>
+          {#if paletteOpen}
+            <div class="aim-palette" role="menu" aria-label="Text color">
+              {#each COLORS as [hex, label] (hex)}
+                <button type="button" class="aim-palette__swatch" role="menuitem" title={label}
+                  aria-label={label} style:background={hex}
+                  onmousedown={(e) => e.preventDefault()} onclick={() => pickColor(hex)}></button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+      <div
+        class="aim-field editor"
+        contenteditable="true"
+        role="textbox"
+        tabindex="0"
+        aria-multiline="true"
         aria-label="Message"
-        autofocus
-        bind:value={draft}
-        bind:this={box}
+        bind:this={editor}
         onkeydown={keydown}
-        oninput={typed}
-      ></textarea>
+        oninput={edited}
+        onpaste={paste}
+        ondrop={(e) => e.preventDefault()}
+      ></div>
       <div class="buttons">
         <button class="aim-btn is-default" disabled={!draft.trim()}>Send</button>
       </div>
@@ -214,7 +295,7 @@
     min-height: 0;
     overflow-y: auto;
   }
-  .aim-msg {
+  .aim-msg__text {
     /* Keep the line breaks people type. */
     white-space: pre-wrap;
   }
@@ -223,8 +304,15 @@
     flex-direction: column;
     gap: 6px;
   }
-  textarea {
-    resize: none;
+  .editor {
+    /* About three lines, then it scrolls. */
+    height: 4.6em;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .color {
+    position: relative;
   }
   .buttons {
     display: flex;

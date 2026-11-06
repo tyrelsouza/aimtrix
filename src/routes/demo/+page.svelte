@@ -131,7 +131,8 @@
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> yep! what's up</p>
           <p class="aim-msg"><span class="aim-msg__time">(9:41 PM)</span><span class="aim-msg__name aim-msg__name--self">Alice Anderson:</span> testing AIMtrix</p>
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--self">Alice Anderson:</span> did this send?<span class="aim-msg__note"> (not sent)</span></p>
-          <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> nice, this is <b>bold</b> and <span style="color: #ff0000">red</span></p>
+          <p class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <span class="aim-msg__html">nice, this is <b>bold</b> and <span style="color: #ff0000">red</span>, a <a href="https://example.org">link</a>, <code>code</code> and a <span data-mx-spoiler="">spoiler</span></span></p>
+          <div class="aim-msg"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> <span class="aim-msg__html"><blockquote>a quote from another client</blockquote>and the reply</span></div>
           <p class="aim-msg aim-msg--undecryptable"><span class="aim-msg__name aim-msg__name--buddy">Bob Brown:</span> 🔒 Unable to decrypt this message yet.</p>
           <p class="aim-msg aim-msg--system">Bob Brown is away: "grabbing lunch"</p>
         </div>
@@ -142,7 +143,14 @@
         <button class="aim-toolbar__btn"><i>I</i></button>
         <button class="aim-toolbar__btn"><u>U</u></button>
         <span class="aim-toolbar__sep"></span>
-        <button class="aim-toolbar__btn" style="color: #e00000">A</button>
+        <div style="position: relative">
+          <button class="aim-toolbar__btn" style="color: #ff0000" aria-expanded="true">A</button>
+          <div class="aim-palette">
+            {#each ["#000000", "#ff0000", "#0000ff", "#008000", "#800080", "#ff8000", "#008080", "#808080"] as hex (hex)}
+              <button class="aim-palette__swatch" style:background={hex} aria-label={hex}></button>
+            {/each}
+          </div>
+        </div>
       </div>
       <div class="row">
         <textarea class="aim-field grow" rows="3">see you at 5?</textarea>

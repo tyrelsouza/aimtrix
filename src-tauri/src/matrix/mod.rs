@@ -1,5 +1,6 @@
 //! The single Matrix session owned by the Rust core: sign on, resume, sign off.
 
+mod html;
 mod keyring;
 mod media;
 pub mod rooms;
@@ -782,7 +783,7 @@ mod tests {
         .unwrap();
 
         let body = format!("send test {}\nsecond line", rand::random::<u32>());
-        watching.send(&body).await.unwrap();
+        watching.send(&body, None).await.unwrap();
         wait_for_lines(&mut lines, &mut diffs, "Alice's own message", |l| {
             said(l, "Alice Anderson", &body, true)
         })
@@ -951,6 +952,99 @@ mod tests {
         wait_for_typing(&mut bob_sees, &["Alice Anderson"]).await;
         alice_watch.set_typing(false).await.unwrap();
         wait_for_typing(&mut bob_sees, &[]).await;
+
+        for (watching, list, syncing, client) in [
+            (alice_watch, alice_list, alice_sync, alice),
+            (bob_watch, bob_list, bob_sync, bob),
+        ] {
+            drop(watching);
+            list.abort();
+            syncing.stop().await;
+            client.logout().await.unwrap();
+        }
+    }
+
+    /// Watch a room's lines; diffs go to the returned receiver.
+    async fn watch_lines(
+        client: &Client,
+        room_id: &str,
+    ) -> (
+        Vec<timeline::Line>,
+        timeline::Watching,
+        tokio::sync::mpsc::UnboundedReceiver<timeline::Diff>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let (lines, watching) = timeline::watch(
+            client,
+            room_id,
+            move |d| {
+                let _ = tx.send(d);
+            },
+            |_| {},
+        )
+        .await
+        .unwrap();
+        (lines, watching, rx)
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn formatting_round_trips_and_scripts_are_stripped() {
+        use matrix_sdk::ruma::{RoomId, events::room::message::RoomMessageEventContent};
+
+        let alice_dir = tempfile::tempdir().unwrap();
+        let (alice, alice_sync, alice_list, room_id) =
+            sign_on_to_room(alice_dir.path(), "alice", |b| b.name == "Bob Brown").await;
+        let bob_dir = tempfile::tempdir().unwrap();
+        let (bob, bob_sync, bob_list, _) = sign_on_to_room(bob_dir.path(), "bob", {
+            let room_id = room_id.clone();
+            move |b| b.room_id == room_id
+        })
+        .await;
+        let (mut alice_lines, alice_watch, mut alice_diffs) = watch_lines(&alice, &room_id).await;
+        let (mut bob_lines, bob_watch, mut bob_diffs) = watch_lines(&bob, &room_id).await;
+
+        // Alice formats; Bob gets the same formatting.
+        let tag = rand::random::<u32>();
+        let body = format!("bold red {tag}");
+        let html = format!(r##"<b>bold</b> <font data-mx-color="#ff0000">red</font> {tag}"##);
+        alice_watch.send(&body, Some(&html)).await.unwrap();
+        // The SDK's own cleaner may rewrite the markup (e.g. `font` to
+        // `span`), so check for the formatting, not exact HTML.
+        wait_for_lines(&mut bob_lines, &mut bob_diffs, "Alice's formatting", |l| {
+            l.iter().any(|line| {
+                matches!(line, timeline::Line::Message { body: b, html: Some(h), .. }
+                    if *b == body
+                        && h.contains("<b>bold</b>")
+                        && h.contains(r##"data-mx-color="#ff0000">red<"##))
+            })
+        })
+        .await;
+
+        // Another client sends a script; it never reaches Alice's window.
+        let body = format!("hi {tag}");
+        bob.get_room(&RoomId::parse(&room_id).unwrap())
+            .unwrap()
+            .send(RoomMessageEventContent::text_html(
+                &body,
+                format!("<script>alert(1)</script><b>hi</b> {tag}"),
+            ))
+            .await
+            .unwrap();
+        wait_for_lines(
+            &mut alice_lines,
+            &mut alice_diffs,
+            "Bob's cleaned message",
+            // The SDK's cleaner drops the tag but keeps its text, so check
+            // that no script survives and the formatting does.
+            |l| {
+                l.iter().any(|line| {
+                    matches!(line, timeline::Line::Message { body: b, html: Some(h), .. }
+                        if *b == body && !h.contains("<script") && h.contains("<b>hi</b>"))
+                })
+            },
+        )
+        .await;
 
         for (watching, list, syncing, client) in [
             (alice_watch, alice_list, alice_sync, alice),

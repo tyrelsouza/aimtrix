@@ -117,13 +117,19 @@ pub async fn room_timeline(
     session::watch_timeline(&app, &client(&session).await?, &room_id).await
 }
 
-/// Send a plain-text message from a room's IM window.
+/// Send a message from a room's IM window. `body` is the plain text;
+/// `html` is the formatted version, if any, and gets cleaned first.
 #[tauri::command]
-pub async fn send_message(app: AppHandle, room_id: String, body: String) -> Result<(), String> {
+pub async fn send_message(
+    app: AppHandle,
+    room_id: String,
+    body: String,
+    html: Option<String>,
+) -> Result<(), String> {
     if body.trim().is_empty() {
         return Err("Type a message first.".to_owned());
     }
-    session::send_message(&app, &room_id, &body).await
+    session::send_message(&app, &room_id, &body, html.as_deref()).await
 }
 
 /// Load older messages in a room's IM window; they arrive as

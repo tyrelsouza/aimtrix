@@ -12,7 +12,7 @@ use matrix_sdk::{
     Client, Room, RoomState,
     ruma::{
         OwnedUserId, RoomId, UserId,
-        events::room::message::{MessageType, RoomMessageEventContent},
+        events::room::message::{MessageFormat, MessageType, RoomMessageEventContent},
     },
 };
 use matrix_sdk_ui::timeline::{
@@ -21,6 +21,8 @@ use matrix_sdk_ui::timeline::{
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::async_runtime::{JoinHandle, spawn};
+
+use super::html;
 use tokio::sync::broadcast::error::RecvError;
 
 /// History to load when the window opens, and each time you scroll up.
@@ -37,7 +39,10 @@ pub enum Line {
         name: String,
         /// Sent by us.
         own: bool,
+        /// Plain text, always there.
         body: String,
+        /// Cleaned formatted text, if the message has any.
+        html: Option<String>,
         /// `/me`: shown as "* Name text".
         emote: bool,
         /// Ours, and the server didn't take it.
@@ -174,11 +179,16 @@ impl Watching {
             .map_err(|e| format!("Couldn't send the typing notice: {e}"))
     }
 
-    /// Send a plain-text message. It shows up in the lines right away and is
-    /// encrypted first if the room is.
-    pub async fn send(&self, body: &str) -> Result<(), String> {
+    /// Send a message: plain text, plus formatted text that's cleaned first.
+    /// It shows up in the lines right away and is encrypted first if the
+    /// room is.
+    pub async fn send(&self, body: &str, html: Option<&str>) -> Result<(), String> {
+        let content = match html.map(html::sanitize) {
+            Some(html) if !html.trim().is_empty() => RoomMessageEventContent::text_html(body, html),
+            _ => RoomMessageEventContent::text_plain(body),
+        };
         self.timeline
-            .send(RoomMessageEventContent::text_plain(body).into())
+            .send(content.into())
             .await
             .map(|_| ())
             .map_err(|e| format!("Couldn't send the message: {e}"))
@@ -232,11 +242,17 @@ fn line(item: &TimelineItem) -> Line {
     let Some(message) = event.content().as_message() else {
         return Line::Other { id };
     };
-    let emote = match message.msgtype() {
-        MessageType::Text(_) | MessageType::Notice(_) => false,
-        MessageType::Emote(_) => true,
+    let (emote, formatted) = match message.msgtype() {
+        MessageType::Text(text) => (false, &text.formatted),
+        MessageType::Notice(notice) => (false, &notice.formatted),
+        MessageType::Emote(emote) => (true, &emote.formatted),
         _ => return Line::Other { id },
     };
+    let html = formatted
+        .as_ref()
+        .filter(|f| f.format == MessageFormat::Html)
+        .map(|f| html::sanitize(&f.body))
+        .filter(|html| !html.trim().is_empty());
     let name = match event.sender_profile() {
         TimelineDetails::Ready(profile) => profile.display_name.clone(),
         _ => None,
@@ -248,6 +264,7 @@ fn line(item: &TimelineItem) -> Line {
         name,
         own: event.is_own(),
         body: message.body().to_owned(),
+        html,
         emote,
         failed: matches!(
             event.send_state(),
@@ -280,6 +297,7 @@ mod tests {
             name: "Bob Brown".into(),
             own: false,
             body: "hi".into(),
+            html: None,
             emote: false,
             failed: false,
             timestamp: 5,
@@ -295,7 +313,7 @@ mod tests {
                 "index": 2,
                 "value": {
                     "type": "message", "id": "1", "sender": "@bob:localhost",
-                    "name": "Bob Brown", "own": false, "body": "hi",
+                    "name": "Bob Brown", "own": false, "body": "hi", "html": null,
                     "emote": false, "failed": false, "timestamp": 5,
                 },
             })
