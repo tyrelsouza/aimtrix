@@ -284,11 +284,27 @@ pub async fn watch(
             };
             let mut setup = std::pin::pin!(setup);
             let mut setting_up = true;
+            // The SDK empties every conversation when you block or unblock
+            // someone; this loads a page of history back in.
+            let mut refill: Option<
+                std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
+            > = None;
             loop {
                 tokio::select! {
                     () = &mut setup, if setting_up => setting_up = false,
+                    () = async { refill.as_mut().unwrap().await }, if refill.is_some() => {
+                        refill = None;
+                    }
                     batch = diffs.next() => match batch {
                         Some(batch) => {
+                            if batch.iter().any(|c| matches!(c, VectorDiff::Clear)) && !setting_up {
+                                let timeline = timeline.clone();
+                                refill = Some(Box::pin(async move {
+                                    if let Err(e) = timeline.paginate_backwards(PAGE).await {
+                                        eprintln!("Couldn't reload history: {e}");
+                                    }
+                                }));
+                            }
                             for change in batch {
                                 for item in diff_items(&change) {
                                     load_replied_to(&timeline, item, &mut replies_asked);

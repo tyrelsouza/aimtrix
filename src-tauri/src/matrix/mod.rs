@@ -2642,4 +2642,104 @@ mod tests {
             }
         }
     }
+
+    /// Log in as a throwaway user from [`register_throwaway_user`].
+    async fn throwaway_login(dir: &std::path::Path, user: &str) -> Client {
+        login(dir, PASS, HS, user, "aimtrix-test").await.unwrap()
+    }
+
+    /// Deactivate a throwaway user, signing out all its devices.
+    async fn deactivate(client: &Client) {
+        use matrix_sdk::ruma::api::client::uiaa::{AuthData, MatrixUserIdentifier, Password};
+        let user = client.user_id().unwrap().localpart().to_owned();
+        let password = Password::new(
+            MatrixUserIdentifier::new(user).into(),
+            "aimtrix-test".to_owned(),
+        );
+        client
+            .account()
+            .deactivate(None, Some(AuthData::Password(password)), true)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn blocking_hides_a_buddys_messages_until_unblocked() {
+        use matrix_sdk::ruma::{
+            api::client::room::create_room::v3::Request,
+            events::room::message::RoomMessageEventContent,
+        };
+
+        // Throwaway users, so blocking doesn't hide anyone from other tests.
+        let blocker_name = register_throwaway_user("blocker").await;
+        let pest_name = register_throwaway_user("pest").await;
+        let blocker_dir = tempfile::tempdir().unwrap();
+        let blocker = throwaway_login(blocker_dir.path(), &blocker_name).await;
+        let pest_dir = tempfile::tempdir().unwrap();
+        let pest = throwaway_login(pest_dir.path(), &pest_name).await;
+        let pest_id = pest.user_id().unwrap().to_string();
+
+        let mut request = Request::new();
+        request.is_direct = true;
+        request.invite = vec![blocker.user_id().unwrap().to_owned()];
+        let room = pest.create_room(request).await.unwrap();
+        let room_id = room.room_id().to_string();
+        blocker.join_room_by_id(room.room_id()).await.unwrap();
+        let body = format!("pest says hi {}", rand::random::<u32>());
+        room.send(RoomMessageEventContent::text_plain(&body))
+            .await
+            .unwrap();
+
+        let syncing = sync::start(&blocker, |_| {}).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let watcher = watch_buddies(&syncing, move |b| {
+            let _ = tx.send(b);
+        });
+        let checks = std::panic::AssertUnwindSafe(async {
+            let blocked_is = |b: &[rooms::Buddy], want: bool| {
+                b.iter().any(|b| {
+                    b.room_id == room_id
+                        && b.user_id.as_deref() == Some(pest_id.as_str())
+                        && b.blocked == want
+                })
+            };
+            wait_for_buddies(&mut rx, "the DM, not blocked", |b| blocked_is(b, false)).await;
+            let (mut lines, watching, mut diffs) = watch_lines(&blocker, &room_id).await;
+            let shows = |l: &[timeline::Line]| {
+                l.iter().any(
+                    |line| matches!(line, timeline::Line::Message { body: b, .. } if *b == body),
+                )
+            };
+            wait_for_lines(&mut lines, &mut diffs, "the pest's message", shows).await;
+
+            rooms::set_blocked(&blocker, &pest_id, true).await.unwrap();
+            wait_for_buddies(&mut rx, "the DM blocked", |b| blocked_is(b, true)).await;
+            wait_for_lines(&mut lines, &mut diffs, "the message hidden", |l| !shows(l)).await;
+            // The conversation reloads, rather than staying empty.
+            wait_for_lines(&mut lines, &mut diffs, "the room's history back", |l| {
+                l.iter()
+                    .any(|line| matches!(line, timeline::Line::Membership { .. }))
+            })
+            .await;
+
+            rooms::set_blocked(&blocker, &pest_id, false).await.unwrap();
+            wait_for_buddies(&mut rx, "the DM unblocked", |b| blocked_is(b, false)).await;
+            wait_for_lines(&mut lines, &mut diffs, "the message back", shows).await;
+            drop(watching);
+            assert_eq!(
+                rooms::set_blocked(&blocker, blocker.user_id().unwrap().as_ref(), true).await,
+                Err("You can't block yourself.".to_owned())
+            );
+        });
+        let result = futures_util::FutureExt::catch_unwind(checks).await;
+
+        watcher.abort();
+        syncing.stop().await;
+        deactivate(&blocker).await;
+        deactivate(&pest).await;
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
+    }
 }

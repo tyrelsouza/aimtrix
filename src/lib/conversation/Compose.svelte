@@ -13,6 +13,7 @@
     error = $bindable(""),
     uploading = false,
     beside,
+    actions,
   }: {
     roomId: string;
     error?: string;
@@ -20,6 +21,8 @@
     uploading?: boolean;
     /** Shown to the right of the message box, e.g. your Buddy Icon. */
     beside?: Snippet;
+    /** More buttons, before Send File…, e.g. Block. */
+    actions?: Snippet;
   } = $props();
 
   /** The editor's plain text, to know whether there's anything to send. */
@@ -218,8 +221,11 @@
     {@render beside?.()}
   </div>
   <div class="buttons">
-    <button type="button" class="aim-btn" disabled={uploading} onclick={pickFiles}
-      title="Send a file or picture. You can also drop files on this window, or paste a picture.">Send File…</button>
+    <span class="left">
+      {@render actions?.()}
+      <button type="button" class="aim-btn" disabled={uploading} onclick={pickFiles}
+        title="Send a file or picture. You can also drop files on this window, or paste a picture.">Send File…</button>
+    </span>
     <button class="aim-btn is-default" disabled={!draft.trim()}>Send</button>
   </div>
 </form>
@@ -249,5 +255,9 @@
   .buttons {
     display: flex;
     justify-content: space-between;
+  }
+  .left {
+    display: flex;
+    gap: 6px;
   }
 </style>

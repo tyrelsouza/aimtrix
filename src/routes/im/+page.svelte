@@ -15,6 +15,9 @@
   let kind = $state<"dm" | "group">("dm");
   let presence = $state<Presence | null>(null);
   let awayMessage = $state<string | null>(null);
+  /** The other person, and whether they're blocked. */
+  let userId = $state<string | null>(null);
+  let blocked = $state(false);
   /** Has messages you haven't read, per the Buddy List. */
   let unread = $state(false);
   let error = $state("");
@@ -44,6 +47,17 @@
     ),
   );
 
+  async function toggleBlock() {
+    if (!userId) return;
+    error = "";
+    try {
+      if (blocked) await invoke("unblock_buddy", { userId });
+      else await invoke("block_buddy", { userId, name });
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   function cancelUpload() {
     invoke("cancel_upload", { roomId }).catch((e) => (error = String(e)));
   }
@@ -65,6 +79,8 @@
       unread = buddy.unread;
       presence = buddy.presence;
       awayMessage = buddy.awayMessage;
+      userId = buddy.userId;
+      blocked = buddy.blocked;
       if (buddy.icon !== listIcon) {
         listIcon = buddy.icon;
         loadBuddyIcon();
@@ -89,7 +105,11 @@
 
 <div class="layout">
   <main class="aim-window__body" class:aim-drop-target={dropping}>
-    {#if presence === "away"}
+    {#if blocked}
+      <p class="aim-away-banner" role="status">
+        <b>You've blocked {name}.</b> Their messages are hidden.
+      </p>
+    {:else if presence === "away"}
       <p class="aim-away-banner" role="status">
         <b>{name} is away</b>{awayMessage ? `: ${awayMessage}` : "."}
       </p>
@@ -106,6 +126,11 @@
       <p class="aim-alert" role="alert">{error}</p>
     {/if}
     <Compose {roomId} uploading={upload !== null} bind:error>
+      {#snippet actions()}
+        <button type="button" class="aim-btn" disabled={!userId} onclick={toggleBlock}>
+          {blocked ? "Unblock" : "Block…"}
+        </button>
+      {/snippet}
       {#snippet beside()}
         <img class="aim-buddy-icon" src={myIcon ?? DEFAULT_DM_ICON} alt="Your Buddy Icon" />
       {/snippet}

@@ -100,9 +100,10 @@
           </ul>
         </details>
         <details class="aim-group" open>
-          <summary>Offline <span class="aim-group__count">(1)</span></summary>
+          <summary>Offline <span class="aim-group__count">(2)</span></summary>
           <ul class="aim-list">
             <li><button class="aim-list__item is-offline"><img class="aim-list__icon" src={none} alt="" />Dave</button></li>
+            <li><button class="aim-list__item is-offline is-blocked" title="Eve is blocked."><img class="aim-list__icon" src={none} alt="" />Eve</button></li>
           </ul>
         </details>
       </div>

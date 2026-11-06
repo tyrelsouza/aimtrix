@@ -124,6 +124,10 @@ pub struct Buddy {
     pub presence: Option<Presence>,
     /// The other person's status message, shown as their away message.
     pub away_message: Option<String>,
+    /// The other person, for a DM.
+    pub user_id: Option<String>,
+    /// The other person in a DM is blocked (ignored).
+    pub blocked: bool,
 }
 
 /// Most rooms the list holds. Far more than anyone keeps on a Buddy List.
@@ -151,6 +155,7 @@ pub fn watch(
         let (icon_ready, mut icons_ready) = unbounded_channel();
         let icons = Icons::new(service.client().clone(), icon_ready);
         let mut presence_changed = presence.subscribe();
+        let mut ignored = service.client().subscribe_to_ignore_user_list_changes();
 
         let mut rooms = Vector::new();
         loop {
@@ -162,6 +167,7 @@ pub fn watch(
                 }
                 Some(()) = icons_ready.recv() => {}
                 Ok(()) = presence_changed.changed() => {}
+                Some(_) = ignored.next() => {}
                 else => break,
             }
             let mut buddies = Vec::with_capacity(rooms.len());
@@ -200,9 +206,17 @@ async fn buddy(room: &RoomListItem, icons: &Arc<Icons>, presence: &Tracker) -> O
     };
     let kind = kind(&facts);
     let mut away_message = None;
+    let other = match kind {
+        Kind::Dm => other_person(room).await,
+        Kind::Group => None,
+    };
+    let blocked = match &other {
+        Some(user) => room.client().is_user_ignored(user).await,
+        None => false,
+    };
     if kind == Kind::Dm && membership == Membership::Joined {
-        let status = match other_person(room).await {
-            Some(user) => presence.get(&user),
+        let status = match &other {
+            Some(user) => presence.get(user),
             // A DM whose other person left has no one to show.
             None => presence.supported().filter(|&s| s).map(|_| Status {
                 presence: Presence::Offline,
@@ -227,6 +241,8 @@ async fn buddy(room: &RoomListItem, icons: &Arc<Icons>, presence: &Tracker) -> O
         icon: avatar.and_then(|mxc| icons.get(&mxc)),
         presence: facts.presence,
         away_message,
+        user_id: other.map(|u| u.to_string()),
+        blocked,
     })
 }
 
@@ -385,6 +401,27 @@ async fn existing_dm(
         }
     }
     None
+}
+
+/// Block (ignore) or unblock someone. The server then leaves out their
+/// messages and invitations, and the SDK reloads open conversations.
+pub async fn set_blocked(client: &Client, user_id: &str, blocked: bool) -> Result<(), String> {
+    let user = UserId::parse(user_id).map_err(|e| format!("Bad user ID: {e}"))?;
+    if client.user_id() == Some(&user) {
+        return Err("You can't block yourself.".to_owned());
+    }
+    let account = client.account();
+    let result = if blocked {
+        account.ignore_user(&user).await
+    } else {
+        account.unignore_user(&user).await
+    };
+    result.map_err(|e| {
+        format!(
+            "Couldn't {} {user}: {e}",
+            if blocked { "block" } else { "unblock" }
+        )
+    })
 }
 
 /// Accept an invite. The room moves out of Invitations on the next update;

@@ -423,6 +423,45 @@ pub async fn add_buddy(session: State<'_, Session>, buddy: String) -> Result<roo
     rooms::add_buddy(&client(&session).await?, &buddy).await
 }
 
+/// Block someone, after asking. Returns `false` if you said no. The Buddy
+/// List and open conversations update by themselves.
+#[tauri::command]
+pub async fn block_buddy(
+    app: AppHandle,
+    window: WebviewWindow,
+    session: State<'_, Session>,
+    user_id: String,
+    name: String,
+) -> Result<bool, String> {
+    let client = client(&session).await?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .message(format!(
+            "Block {name}? You won't see their messages or invitations anywhere, \
+             and they aren't told."
+        ))
+        .title("Block")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Block".to_owned(),
+            "Cancel".to_owned(),
+        ))
+        .parent(&window)
+        .show(move |block| {
+            let _ = tx.send(block);
+        });
+    if !rx.await.map_err(|e| e.to_string())? {
+        return Ok(false);
+    }
+    rooms::set_blocked(&client, &user_id, true).await?;
+    Ok(true)
+}
+
+/// Unblock someone.
+#[tauri::command]
+pub async fn unblock_buddy(session: State<'_, Session>, user_id: String) -> Result<(), String> {
+    rooms::set_blocked(&client(&session).await?, &user_id, false).await
+}
+
 /// Open Away Message, or focus it.
 #[tauri::command]
 pub fn open_away(app: AppHandle) -> Result<(), String> {

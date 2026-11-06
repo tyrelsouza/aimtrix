@@ -430,8 +430,14 @@ button.aim-list__item:focus-visible {
   font-style: italic;
 }
 
+.aim-list__item.is-blocked {
+  color: var(--c-away);
+  text-decoration: line-through;
+}
+
 .aim-list__item.is-selected.is-away,
-.aim-list__item.is-selected.is-offline {
+.aim-list__item.is-selected.is-offline,
+.aim-list__item.is-selected.is-blocked {
   color: var(--c-select-text);
 }
 

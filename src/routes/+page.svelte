@@ -108,6 +108,7 @@
                   class:is-unread={room.unread}
                   class:is-away={room.presence === "away"}
                   class:is-offline={room.presence === "offline"}
+                  class:is-blocked={room.blocked}
                   title={buddyTooltip(room)}
                   onclick={() => (selected = room.roomId)}
                   ondblclick={() => openRoom(room)}

@@ -14,10 +14,15 @@ export type Buddy = {
   presence: Presence | null;
   /** The other person's status message, shown as their away message. */
   awayMessage: string | null;
+  /** The other person, for a DM. */
+  userId: string | null;
+  /** The other person in a DM is blocked. */
+  blocked: boolean;
 };
 
 /** Hover text for a buddy: their presence and away message. */
 export function buddyTooltip(buddy: Buddy): string | undefined {
+  if (buddy.blocked) return `${buddy.name} is blocked.`;
   switch (buddy.presence) {
     case "away":
       return buddy.awayMessage ? `${buddy.name} is away:\n${buddy.awayMessage}` : `${buddy.name} is away.`;

@@ -49,6 +49,8 @@ pub fn run() {
             commands::paste_picture,
             commands::cancel_upload,
             commands::open_add_buddy,
+            commands::block_buddy,
+            commands::unblock_buddy,
             commands::add_buddy,
             commands::own_presence,
             commands::set_away,
