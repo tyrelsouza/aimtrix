@@ -75,11 +75,10 @@
           </ul>
         </details>
         <details class="aim-group" open>
-          <summary>Buddies <span class="aim-group__count">(2/3)</span></summary>
+          <summary>Online <span class="aim-group__count">(2)</span></summary>
           <ul class="aim-list">
             <li><button class="aim-list__item is-selected is-unread"><img class="aim-list__icon" src={bob} alt="" />Bob Brown</button></li>
-            <li><button class="aim-list__item is-away"><img class="aim-list__icon" src={none} alt="" />Carol Chen</button></li>
-            <li><button class="aim-list__item is-offline"><img class="aim-list__icon" src={none} alt="" />Dave (offline)</button></li>
+            <li><button class="aim-list__item is-away"><img class="aim-list__icon" src={none} alt="" />Carol Chen (away)</button></li>
           </ul>
         </details>
         <details class="aim-group" open>
@@ -98,6 +97,12 @@
                 <button class="aim-btn aim-btn--small">Decline</button>
               </div>
             </li>
+          </ul>
+        </details>
+        <details class="aim-group" open>
+          <summary>Offline <span class="aim-group__count">(1)</span></summary>
+          <ul class="aim-list">
+            <li><button class="aim-list__item is-offline"><img class="aim-list__icon" src={none} alt="" />Dave</button></li>
           </ul>
         </details>
       </div>

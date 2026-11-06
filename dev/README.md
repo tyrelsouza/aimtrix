@@ -8,9 +8,17 @@ python3 dev/seed.py                              # create users and rooms (safe 
 docker compose -f dev/docker-compose.yml down -v # stop and wipe all data
 ```
 
+A second Synapse with presence turned off acts like matrix.org and other servers that do the same. The Rust tests need it too:
+
+```sh
+docker compose -f dev/docker-compose.yml --profile no-presence up -d
+AIMTRIX_HS=http://localhost:8009 python3 dev/seed.py
+```
+
 | What | Where |
 |---|---|
 | Homeserver | `http://localhost:8008` (server name `localhost`, presence on) |
+| Homeserver without presence | `http://localhost:8009` (same users and rooms once seeded; `synapse/no-presence.yaml` overrides `homeserver.yaml`) |
 | Element Web | `http://localhost:8080`, the "other person" to chat with AIMtrix |
 | Users | `alice`, `bob`, `carol`, password `aimtrix-test` |
 

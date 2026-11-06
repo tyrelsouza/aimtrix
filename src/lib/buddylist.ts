@@ -10,17 +10,35 @@ export type Buddy = {
   unread: boolean;
   /** `data:` URL, or null for the default icon. */
   icon: string | null;
+  /** The other person's presence, for a joined DM. Null when the server has no presence. */
+  presence: Presence | null;
 };
 
-export type Section = "favorites" | "buddies" | "chats" | "invitations";
+export type Presence = "online" | "away" | "offline";
+
+/** "buddies" holds DMs when the server has no presence; otherwise they're in "online" and "offline". */
+export type Section = "favorites" | "buddies" | "online" | "chats" | "invitations" | "offline";
 
 /** Buddy List groups in display order, with their titles. */
 export const SECTIONS: [Section, string][] = [
   ["favorites", "Favorites"],
   ["buddies", "Buddies"],
+  ["online", "Online"],
   ["chats", "Chats"],
   ["invitations", "Invitations"],
+  ["offline", "Offline"],
 ];
+
+/**
+ * The groups to show: Online and Offline when the server has presence,
+ * Buddies when it doesn't, and Invitations only when there are some.
+ */
+export function visibleSections(buddies: Buddy[]): [Section, string][] {
+  const presence = buddies.some((b) => b.presence !== null);
+  const hidden = new Set<Section>(presence ? ["buddies"] : ["online", "offline"]);
+  if (!buddies.some((b) => b.section === "invitations")) hidden.add("invitations");
+  return SECTIONS.filter(([section]) => !hidden.has(section));
+}
 
 /**
  * Call `onChange` with the current Buddy List and then every change.

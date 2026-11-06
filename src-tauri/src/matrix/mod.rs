@@ -5,6 +5,7 @@ mod html;
 mod keyring;
 pub mod media;
 pub mod members;
+pub mod presence;
 pub mod rooms;
 pub mod sync;
 pub mod timeline;
@@ -101,6 +102,8 @@ pub async fn resume(data_dir: &Path) -> Result<Option<Client>, String> {
 /// Sign off: delete this device on the server, then forget it locally. Local
 /// cleanup happens even if the server can't be reached.
 pub async fn sign_off(data_dir: &Path, client: Client) -> Result<(), String> {
+    // Otherwise buddies see us online until the server times us out.
+    presence::sign_off(&client).await;
     if let Err(e) = client.logout().await {
         eprintln!("Server-side logout failed, forgetting the session anyway: {e}");
     }
@@ -344,6 +347,18 @@ mod tests {
             .any(|b| b.name == name && b.section == section)
     }
 
+    /// A DM's group: Buddies, or Online/Offline when the server has presence.
+    fn is_buddy(section: rooms::Section) -> bool {
+        use rooms::Section::*;
+        matches!(section, Buddies | Online | Offline)
+    }
+
+    fn has_buddy(buddies: &[rooms::Buddy], name: &str) -> bool {
+        buddies
+            .iter()
+            .any(|b| b.name == name && is_buddy(b.section))
+    }
+
     #[tokio::test]
     #[ignore = "needs the dev homeserver"]
     async fn buddy_list_shows_seeded_rooms_and_updates_live() {
@@ -361,8 +376,8 @@ mod tests {
         });
 
         wait_for_buddies(&mut rx, "the seeded rooms", |b| {
-            has(b, "Bob Brown", Section::Buddies)
-                && has(b, "Carol Chen", Section::Buddies)
+            has_buddy(b, "Bob Brown")
+                && has_buddy(b, "Carol Chen")
                 && has(b, "Test Chat", Section::Favorites)
                 && has(b, "Secret Chat", Section::Chats)
                 && has(b, "Invite Test", Section::Invitations)
@@ -593,7 +608,7 @@ mod tests {
             &mut rx,
             "DM in Buddies, group in Chats, decline gone",
             |b| {
-                section_of(b, &dm_id) == Some(Section::Buddies)
+                section_of(b, &dm_id).is_some_and(is_buddy)
                     && section_of(b, &group_id) == Some(Section::Chats)
                     && section_of(b, &declined_id).is_none()
             },
@@ -2167,5 +2182,133 @@ mod tests {
             .deactivate(None, Some(AuthData::Password(password)), true)
             .await
             .unwrap();
+    }
+
+    /// The second dev homeserver, with presence off (the `no-presence`
+    /// compose profile).
+    const NO_PRESENCE_HS: &str = "http://localhost:8009";
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn presence_splits_buddies_into_online_and_offline() {
+        use matrix_sdk::ruma::{api::client::room::create_room::v3::Request, user_id};
+        use rooms::Section;
+        use std::time::Duration;
+
+        // A fresh buddy, since other tests keep the seeded users online.
+        let user = register_throwaway_user("presence").await;
+        let buddy_dir = tempfile::tempdir().unwrap();
+        let buddy = login(buddy_dir.path(), PASS, HS, &user, "aimtrix-test")
+            .await
+            .unwrap();
+        let mut request = Request::new();
+        request.is_direct = true;
+        request.invite = vec![user_id!("@alice:localhost").to_owned()];
+        let room = buddy.create_room(request).await.unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+            .await
+            .unwrap();
+        alice.join_room_by_id(room.room_id()).await.unwrap();
+        let syncing = sync::start(&alice, |_| {}).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let watcher = rooms::watch_every(
+            syncing.room_list_service(),
+            Duration::from_secs(1),
+            move |b| {
+                let _ = tx.send(b);
+            },
+        );
+        let room_id = room.room_id().to_string();
+        let section_of = move |b: &[rooms::Buddy]| {
+            b.iter()
+                .find(|b| b.room_id == room_id)
+                .map(|b| (b.section, b.presence))
+        };
+
+        wait_for_buddies(&mut rx, "the buddy offline", |b| {
+            section_of(b) == Some((Section::Offline, Some(presence::Presence::Offline)))
+        })
+        .await;
+        let (changed, _) = tokio::sync::mpsc::unbounded_channel();
+        let tracker = presence::Tracker::new(buddy.clone(), Duration::from_secs(1), changed);
+        wait_for_buddies(&mut rx, "the buddy online", |b| {
+            section_of(b) == Some((Section::Online, Some(presence::Presence::Online)))
+        })
+        .await;
+        drop(tracker);
+        presence::sign_off(&buddy).await;
+        wait_for_buddies(&mut rx, "the buddy offline again", |b| {
+            section_of(b) == Some((Section::Offline, Some(presence::Presence::Offline)))
+        })
+        .await;
+
+        watcher.abort();
+        syncing.stop().await;
+        if let Some(dm) = alice.get_room(room.room_id()) {
+            dm.leave().await.unwrap();
+        }
+        alice.logout().await.unwrap();
+        use matrix_sdk::ruma::api::client::uiaa::{AuthData, MatrixUserIdentifier, Password};
+        let password = Password::new(
+            MatrixUserIdentifier::new(user.clone()).into(),
+            "aimtrix-test".to_owned(),
+        );
+        buddy
+            .account()
+            .deactivate(None, Some(AuthData::Password(password)), true)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn without_presence_buddies_stay_in_one_group() {
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let alice = login(dir.path(), PASS, NO_PRESENCE_HS, "alice", "aimtrix-test")
+            .await
+            .unwrap_or_else(|e| {
+                panic!("{e} (start it with `docker compose -f dev/docker-compose.yml --profile no-presence up -d`)")
+            });
+        // Find out the way the Buddy List does.
+        let (changed, mut changes) = tokio::sync::mpsc::unbounded_channel();
+        let tracker = presence::Tracker::new(alice.clone(), Duration::from_secs(1), changed);
+        tokio::time::timeout(Duration::from_secs(10), changes.recv())
+            .await
+            .unwrap();
+        assert_eq!(tracker.supported(), Some(false));
+        assert_eq!(tracker.get(alice.user_id().unwrap()), None);
+
+        let syncing = sync::start(&alice, |_| {}).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let watcher = rooms::watch_every(
+            syncing.room_list_service(),
+            Duration::from_secs(1),
+            move |b| {
+                let _ = tx.send(b);
+            },
+        );
+        wait_for_buddies(&mut rx, "the seeded DMs in Buddies", |b| {
+            has(b, "Bob Brown", rooms::Section::Buddies)
+                && has(b, "Carol Chen", rooms::Section::Buddies)
+        })
+        .await;
+        // Give the list's own check time to finish; nothing may move.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let mut last = None;
+        while let Ok(b) = rx.try_recv() {
+            last = Some(b);
+        }
+        if let Some(b) = last {
+            assert!(b.iter().all(|b| b.presence.is_none()), "{b:#?}");
+            assert!(has(&b, "Bob Brown", rooms::Section::Buddies), "{b:#?}");
+        }
+
+        watcher.abort();
+        syncing.stop().await;
+        alice.logout().await.unwrap();
     }
 }

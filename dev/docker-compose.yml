@@ -3,9 +3,14 @@
 #   python3 dev/seed.py
 # Synapse:     http://localhost:8008
 # Element Web: http://localhost:8080  (second client to talk to AIMtrix)
+#
+# A second Synapse with presence off, for testing that fallback:
+#   docker compose -f dev/docker-compose.yml --profile no-presence up -d
+#   AIMTRIX_HS=http://localhost:8009 python3 dev/seed.py
+# Synapse (no presence): http://localhost:8009
 
 services:
-  synapse:
+  synapse: &synapse
     image: matrixdotorg/synapse:latest
     environment:
       SYNAPSE_CONFIG_PATH: /config/homeserver.yaml
@@ -14,7 +19,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >
-        python -m synapse.app.homeserver -c /config/homeserver.yaml --generate-keys &&
+        python -m synapse.app.homeserver -c "$$SYNAPSE_CONFIG_PATH" --generate-keys &&
         chown -R 991:991 /data &&
         exec /start.py
     volumes:
@@ -28,6 +33,19 @@ services:
       timeout: 3s
       retries: 20
 
+  synapse-no-presence:
+    <<: *synapse
+    profiles: [no-presence]
+    # A directory: Synapse loads every *.yaml in it, in sorted order.
+    environment:
+      SYNAPSE_CONFIG_PATH: /config
+    volumes:
+      - ./synapse/homeserver.yaml:/config/homeserver.yaml:ro
+      - ./synapse/no-presence.yaml:/config/no-presence.yaml:ro
+      - synapse-no-presence-data:/data
+    ports:
+      - "127.0.0.1:8009:8008"
+
   element:
     image: vectorim/element-web:latest
     volumes:
@@ -40,3 +58,4 @@ services:
 
 volumes:
   synapse-data:
+  synapse-no-presence-data:

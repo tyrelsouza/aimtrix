@@ -2,6 +2,13 @@
 
 What changed in each phase of `PLAN.md`, step by step. Open problems live under "Known issues and follow-ups" in `PLAN.md`.
 
+## Phase 6: AIM extras
+
+### Changes
+- **6.1 Presence.** On servers with presence, the Buddy List splits DMs into an Online group (online and away buddies) and an Offline group at the bottom, as in AIM. Favorites stay put but grey out when that person is offline. On servers without presence (matrix.org included), DMs stay in Buddies, sorted by recent activity. Signing off sets you offline first.
+  - Sliding sync carries no presence, so `matrix/presence.rs` sets you online, reads it back to see whether the server keeps presence at all (a server without it says "offline" for everyone), then sets you online every 20 s and polls each DM buddy's presence just as often.
+  - `dev/docker-compose.yml` has a `no-presence` profile: a second Synapse on `http://localhost:8009` with presence off (`dev/synapse/no-presence.yaml`), seeded with the same users and rooms. Server tests cover both servers.
+
 ## Phase 5: Encryption
 
 ### Changes

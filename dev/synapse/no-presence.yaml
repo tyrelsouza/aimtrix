@@ -1,0 +1,7 @@
+# Overrides for the second dev homeserver (the `no-presence` compose
+# profile), which acts like servers that turn presence off, matrix.org
+# included. Loaded after homeserver.yaml; top-level keys replace its keys.
+public_baseurl: "http://localhost:8009/"
+
+presence:
+  enabled: false

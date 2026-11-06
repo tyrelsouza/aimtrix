@@ -4,7 +4,7 @@
   import { describe, watchSyncStatus, type SyncStatus } from "$lib/sync";
   import { watchRecovery, type Recovery } from "$lib/recovery";
   import { watchTrust, type Trust } from "$lib/verify";
-  import { SECTIONS, watchBuddyList, type Buddy } from "$lib/buddylist";
+  import { visibleSections, watchBuddyList, type Buddy } from "$lib/buddylist";
   import { DEFAULT_CHAT_ICON, DEFAULT_DM_ICON } from "$lib/icons";
 
   let userId = $state<string | null>(null);
@@ -33,13 +33,12 @@
     }
   }
 
-  // Invitations only show up when there are some.
   const groups = $derived(
-    SECTIONS.map(([section, title]) => ({
+    visibleSections(buddies).map(([section, title]) => ({
       section,
       title,
       rooms: buddies.filter((b) => b.section === section),
-    })).filter((g) => g.section !== "invitations" || g.rooms.length > 0),
+    })),
   );
 
   async function respond(command: "accept_invite" | "decline_invite", roomId: string) {
@@ -95,6 +94,8 @@
                   class="aim-list__item"
                   class:is-selected={room.roomId === selected}
                   class:is-unread={room.unread}
+                  class:is-away={room.presence === "away"}
+                  class:is-offline={room.presence === "offline"}
                   onclick={() => (selected = room.roomId)}
                   ondblclick={() => openRoom(room)}
                 >
