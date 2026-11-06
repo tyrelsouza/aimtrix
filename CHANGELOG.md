@@ -8,6 +8,9 @@ What changed in each phase of `PLAN.md`, step by step. Open problems live under 
 - **6.1 Presence.** On servers with presence, the Buddy List splits DMs into an Online group (online and away buddies) and an Offline group at the bottom, as in AIM. Favorites stay put but grey out when that person is offline. On servers without presence (matrix.org included), DMs stay in Buddies, sorted by recent activity. Signing off sets you offline first.
   - Sliding sync carries no presence, so `matrix/presence.rs` sets you online, reads it back to see whether the server keeps presence at all (a server without it says "offline" for everyone), then sets you online every 20 s and polls each DM buddy's presence just as often.
   - `dev/docker-compose.yml` has a `no-presence` profile: a second Synapse on `http://localhost:8009` with presence off (`dev/synapse/no-presence.yaml`), seeded with the same users and rooms. Server tests cover both servers.
+- **6.2 Away messages.** The Buddy List's new **Away…** button opens an Away Message window. **I'm Away** sets you away with that message, and the Buddy List then shows "You're away: …" with **Edit…** and **I'm Back**. Away buddies show in grey italics, with their away message on hover, and an IM window with an away buddy shows it in a yellow banner. Other clients see you as Away; Element Web shows a grey badge but not the message text. On servers without presence the Away button is disabled.
+  - Away is presence `unavailable` plus `status_msg`. The presence tracker now lives in the session, so commands can reach it, and sends your own state to windows as `presence:update`. The 20 s heartbeat resends your away message so it sticks.
+  - Polling buddies and the heartbeat now run separately, and the heartbeat waits after you change your away state, to stay within Synapse's default limit of one presence update per user every 10 s.
 
 ## Phase 5: Encryption
 

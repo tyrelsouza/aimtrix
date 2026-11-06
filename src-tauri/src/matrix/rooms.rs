@@ -5,7 +5,7 @@
 //! The rules are pure functions over [`RoomFacts`], so they're unit-tested
 //! without a server. [`watch`] applies them to the live room list.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use eyeball_im::Vector;
 use futures_util::StreamExt;
@@ -22,7 +22,7 @@ use tokio::sync::mpsc::unbounded_channel;
 
 use super::{
     media::{self, Icons},
-    presence::{self, Presence, Tracker},
+    presence::{Presence, Status, Tracker},
 };
 
 /// Room tag that forces a room to be shown as a Chat Room, even if it looks
@@ -121,6 +121,8 @@ pub struct Buddy {
     /// The other person's presence, for a joined DM on a server with
     /// presence.
     pub presence: Option<Presence>,
+    /// The other person's status message, shown as their away message.
+    pub away_message: Option<String>,
 }
 
 /// Most rooms the list holds. Far more than anyone keeps on a Buddy List.
@@ -128,18 +130,10 @@ const MAX_ROOMS: usize = 10_000;
 
 /// Watch the room list in the background. `on_update` gets the whole list,
 /// most recently active first, every time it changes, an icon arrives or a
-/// buddy's presence changes.
+/// buddy's presence (per `presence`) changes.
 pub fn watch(
     service: Arc<RoomListService>,
-    on_update: impl Fn(Vec<Buddy>) + Send + 'static,
-) -> JoinHandle<()> {
-    watch_every(service, presence::INTERVAL, on_update)
-}
-
-/// [`watch`], polling presence every `interval`.
-pub fn watch_every(
-    service: Arc<RoomListService>,
-    interval: Duration,
+    presence: Arc<Tracker>,
     on_update: impl Fn(Vec<Buddy>) + Send + 'static,
 ) -> JoinHandle<()> {
     spawn(async move {
@@ -154,8 +148,8 @@ pub fn watch_every(
         controller.set_filter(Box::new(new_filter_non_left()));
         let mut diffs = std::pin::pin!(diffs);
         let (icon_ready, mut icons_ready) = unbounded_channel();
-        let icons = Icons::new(service.client().clone(), icon_ready.clone());
-        let presence = Tracker::new(service.client().clone(), interval, icon_ready);
+        let icons = Icons::new(service.client().clone(), icon_ready);
+        let mut presence_changed = presence.subscribe();
 
         let mut rooms = Vector::new();
         loop {
@@ -166,6 +160,7 @@ pub fn watch_every(
                     }
                 }
                 Some(()) = icons_ready.recv() => {}
+                Ok(()) = presence_changed.changed() => {}
                 else => break,
             }
             let mut buddies = Vec::with_capacity(rooms.len());
@@ -203,15 +198,20 @@ async fn buddy(room: &RoomListItem, icons: &Arc<Icons>, presence: &Tracker) -> O
         presence: None,
     };
     let kind = kind(&facts);
+    let mut away_message = None;
     if kind == Kind::Dm && membership == Membership::Joined {
-        // A DM whose other person left has no one to show.
-        facts.presence = match other_person(room).await {
+        let status = match other_person(room).await {
             Some(user) => presence.get(&user),
-            None => presence
-                .supported()
-                .filter(|&s| s)
-                .map(|_| Presence::Offline),
+            // A DM whose other person left has no one to show.
+            None => presence.supported().filter(|&s| s).map(|_| Status {
+                presence: Presence::Offline,
+                message: None,
+            }),
         };
+        if let Some(status) = status {
+            facts.presence = Some(status.presence);
+            away_message = status.message;
+        }
     }
     let avatar = avatar(room, kind).await;
     Some(Buddy {
@@ -225,6 +225,7 @@ async fn buddy(room: &RoomListItem, icons: &Arc<Icons>, presence: &Tracker) -> O
         unread: room.num_unread_messages() > 0 || room.is_marked_unread(),
         icon: avatar.and_then(|mxc| icons.get(&mxc)),
         presence: facts.presence,
+        away_message,
     })
 }
 

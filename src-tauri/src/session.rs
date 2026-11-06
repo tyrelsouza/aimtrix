@@ -18,6 +18,7 @@ use crate::{
         self, Session, Signed,
         crypto::{self, Recovery},
         members::{self, ChatRoom},
+        presence::{self, Own, Tracker},
         rooms::{self, Buddy},
         sync::{self, Status},
         timeline::{self, Line},
@@ -34,6 +35,8 @@ pub const BUDDY_LIST_EVENT: &str = "buddylist:update";
 pub const RECOVERY_EVENT: &str = "recovery:status";
 /// Event carrying whether this device is verified ([`Trust`]) to every window.
 pub const TRUST_EVENT: &str = "verification:trust";
+/// Event carrying our own presence ([`Own`]) to every window.
+pub const PRESENCE_EVENT: &str = "presence:update";
 /// Event carrying the verification's new [`Step`] to the Verify window.
 pub const STEP_EVENT: &str = "verification:step";
 
@@ -44,10 +47,21 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
         move |status| on_status(&app, status)
     })
     .await?;
-    let buddy_list = rooms::watch(sync.room_list_service(), {
+    let presence = Tracker::new(client.clone(), presence::INTERVAL);
+    let buddy_list = rooms::watch(sync.room_list_service(), presence.clone(), {
         let app = app.clone();
         move |buddies| on_buddies(&app, buddies)
     });
+    let presence_events = {
+        let app = app.clone();
+        let presence = presence.clone();
+        let mut changes = presence.subscribe();
+        tauri::async_runtime::spawn(async move {
+            while changes.changed().await.is_ok() {
+                on_presence(&app, presence.own());
+            }
+        })
+    };
     // Ask for the recovery key once per sign-on, not on every change.
     let asked = Arc::new(AtomicBool::new(false));
     let recovery = crypto::watch(&client, {
@@ -72,6 +86,8 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
         client,
         sync,
         buddy_list,
+        presence,
+        presence_events,
         recovery,
         trust,
         verification_requests,
@@ -83,6 +99,7 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
 pub async fn end(app: &AppHandle) -> Option<Client> {
     let signed = app.state::<Session>().signed.lock().await.take()?;
     signed.buddy_list.abort();
+    signed.presence_events.abort();
     signed.recovery.abort();
     signed.trust.abort();
     signed
@@ -100,6 +117,7 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
     app.state::<Session>().members.lock().unwrap().clear();
     for (label, window) in app.webview_windows() {
         if label.starts_with(windows::ROOM_LABEL_PREFIX)
+            || label == windows::AWAY_LABEL
             || label == windows::RECOVERY_LABEL
             || label == windows::VERIFY_LABEL
             || label == windows::SETUP_RECOVERY_LABEL
@@ -308,6 +326,12 @@ fn on_status(app: &AppHandle, status: Status) {
     if status == Status::SignedOut {
         let app = app.clone();
         tauri::async_runtime::spawn(async move { signed_out(&app).await });
+    }
+}
+
+fn on_presence(app: &AppHandle, own: Own) {
+    if let Err(e) = app.emit(PRESENCE_EVENT, &own) {
+        eprintln!("Couldn't send your presence to windows: {e}");
     }
 }
 

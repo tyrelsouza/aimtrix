@@ -8,7 +8,8 @@
     "room-*",
     "recovery",
     "verify",
-    "setup-recovery"
+    "setup-recovery",
+    "away"
   ],
   "permissions": [
     "core:default",

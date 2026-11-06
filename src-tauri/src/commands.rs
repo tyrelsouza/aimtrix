@@ -10,6 +10,7 @@ use crate::{
         crypto::{self, Recovery, Setup},
         media,
         members::ChatRoom,
+        presence::Own,
         rooms::{self, Buddy, Section},
         sync::Status,
         timeline::Line,
@@ -256,6 +257,36 @@ async fn client(session: &Session) -> Result<Client, String> {
         .as_ref()
         .map(|s| s.client.clone())
         .ok_or_else(|| "Not signed on.".to_owned())
+}
+
+/// Whether the server has presence, and our away message. Changes arrive as
+/// `presence:update` events.
+#[tauri::command]
+pub async fn own_presence(session: State<'_, Session>) -> Result<Own, String> {
+    let signed = session.signed.lock().await;
+    Ok(signed
+        .as_ref()
+        .map(|s| s.presence.own())
+        .unwrap_or_default())
+}
+
+/// Go away with `message`, or come back with `None`.
+#[tauri::command]
+pub async fn set_away(session: State<'_, Session>, message: Option<String>) -> Result<(), String> {
+    let presence = session
+        .signed
+        .lock()
+        .await
+        .as_ref()
+        .map(|s| s.presence.clone())
+        .ok_or("Not signed on.")?;
+    presence.set_away(message.as_deref()).await
+}
+
+/// Open Away Message, or focus it.
+#[tauri::command]
+pub fn open_away(app: AppHandle) -> Result<(), String> {
+    windows::open_away(&app).map_err(|e| e.to_string())
 }
 
 /// Whether this device can read old messages from the key backup. Changes

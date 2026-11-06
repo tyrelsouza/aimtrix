@@ -51,6 +51,10 @@ pub struct Signed {
     pub client: Client,
     pub sync: sync::Syncing,
     pub buddy_list: tauri::async_runtime::JoinHandle<()>,
+    /// Our presence and away message, and our buddies'.
+    pub presence: std::sync::Arc<presence::Tracker>,
+    /// Sends our own presence to the windows.
+    pub presence_events: tauri::async_runtime::JoinHandle<()>,
     pub recovery: tauri::async_runtime::JoinHandle<()>,
     pub trust: tauri::async_runtime::JoinHandle<()>,
     pub verification_requests: matrix_sdk::event_handler::EventHandlerHandle,
@@ -347,6 +351,32 @@ mod tests {
             .any(|b| b.name == name && b.section == section)
     }
 
+    /// [`rooms::watch`] with its own presence tracker.
+    fn watch_buddies(
+        syncing: &sync::Syncing,
+        on_update: impl Fn(Vec<rooms::Buddy>) + Send + 'static,
+    ) -> tauri::async_runtime::JoinHandle<()> {
+        let service = syncing.room_list_service();
+        let tracker = presence::Tracker::new(service.client().clone(), presence::INTERVAL);
+        rooms::watch(service, tracker, on_update)
+    }
+
+    /// Wait up to 10 s for `tracker` to find out whether the server has
+    /// presence.
+    async fn wait_for_support(tracker: &presence::Tracker) -> bool {
+        let mut changes = tracker.subscribe();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                if let Some(supported) = tracker.supported() {
+                    return supported;
+                }
+                changes.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("timed out finding out whether the server has presence")
+    }
+
     /// A DM's group: Buddies, or Online/Offline when the server has presence.
     fn is_buddy(section: rooms::Section) -> bool {
         use rooms::Section::*;
@@ -371,7 +401,7 @@ mod tests {
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let watcher = rooms::watch(syncing.room_list_service(), move |b| {
+        let watcher = watch_buddies(&syncing, move |b| {
             let _ = tx.send(b);
         });
 
@@ -457,7 +487,7 @@ mod tests {
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let watcher = rooms::watch(syncing.room_list_service(), move |b| {
+        let watcher = watch_buddies(&syncing, move |b| {
             let _ = tx.send(b);
         });
 
@@ -520,7 +550,7 @@ mod tests {
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let watcher = rooms::watch(syncing.room_list_service(), move |b| {
+        let watcher = watch_buddies(&syncing, move |b| {
             let _ = tx.send(b);
         });
 
@@ -567,7 +597,7 @@ mod tests {
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let watcher = rooms::watch(syncing.room_list_service(), move |b| {
+        let watcher = watch_buddies(&syncing, move |b| {
             let _ = tx.send(b);
         });
 
@@ -702,7 +732,7 @@ mod tests {
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let watcher = rooms::watch(syncing.room_list_service(), move |b| {
+        let watcher = watch_buddies(&syncing, move |b| {
             let _ = tx.send(b);
         });
         let room_id = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
@@ -832,7 +862,7 @@ mod tests {
         let client = login(dir, PASS, HS, user, "aimtrix-test").await.unwrap();
         let syncing = sync::start(&client, |_| {}).await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let watcher = rooms::watch(syncing.room_list_service(), move |b| {
+        let watcher = watch_buddies(&syncing, move |b| {
             let _ = tx.send(b);
         });
         let room_id = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
@@ -1158,7 +1188,7 @@ mod tests {
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let list = rooms::watch(syncing.room_list_service(), move |b| {
+        let list = watch_buddies(&syncing, move |b| {
             let _ = tx.send(b);
         });
         let room_id = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
@@ -1215,7 +1245,7 @@ mod tests {
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let list = rooms::watch(syncing.room_list_service(), move |b| {
+        let list = watch_buddies(&syncing, move |b| {
             let _ = tx.send(b);
         });
         let buddies = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -2213,34 +2243,65 @@ mod tests {
         alice.join_room_by_id(room.room_id()).await.unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let watcher = rooms::watch_every(
+        let watcher = rooms::watch(
             syncing.room_list_service(),
-            Duration::from_secs(1),
+            presence::Tracker::new(alice.clone(), Duration::from_secs(1)),
             move |b| {
                 let _ = tx.send(b);
             },
         );
         let room_id = room.room_id().to_string();
-        let section_of = move |b: &[rooms::Buddy]| {
+        let status_of = move |b: &[rooms::Buddy]| {
             b.iter()
                 .find(|b| b.room_id == room_id)
-                .map(|b| (b.section, b.presence))
+                .map(|b| (b.section, b.presence, b.away_message.clone()))
         };
+        use presence::Presence::{Away, Offline, Online};
 
         wait_for_buddies(&mut rx, "the buddy offline", |b| {
-            section_of(b) == Some((Section::Offline, Some(presence::Presence::Offline)))
+            status_of(b) == Some((Section::Offline, Some(Offline), None))
         })
         .await;
-        let (changed, _) = tokio::sync::mpsc::unbounded_channel();
-        let tracker = presence::Tracker::new(buddy.clone(), Duration::from_secs(1), changed);
+        let tracker = presence::Tracker::new(buddy.clone(), Duration::from_secs(1));
         wait_for_buddies(&mut rx, "the buddy online", |b| {
-            section_of(b) == Some((Section::Online, Some(presence::Presence::Online)))
+            status_of(b) == Some((Section::Online, Some(Online), None))
         })
         .await;
+
+        // Away messages show up, and go when the buddy comes back.
+        assert!(wait_for_support(&tracker).await);
+        assert_eq!(
+            tracker.set_away(Some("  ")).await,
+            Err("Type an away message first.".to_owned())
+        );
+        tracker.set_away(Some(" Out to lunch ")).await.unwrap();
+        assert_eq!(tracker.own().away.as_deref(), Some("Out to lunch"));
+        let lunch = Some("Out to lunch".to_owned());
+        wait_for_buddies(&mut rx, "the buddy away", |b| {
+            status_of(b) == Some((Section::Online, Some(Away), lunch.clone()))
+        })
+        .await;
+        // The heartbeat keeps the away message.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let response = alice
+            .send(
+                matrix_sdk::ruma::api::client::presence::get_presence::v3::Request::new(
+                    buddy.user_id().unwrap().to_owned(),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status_msg, lunch);
+        tracker.set_away(None).await.unwrap();
+        wait_for_buddies(&mut rx, "the buddy back", |b| {
+            status_of(b) == Some((Section::Online, Some(Online), None))
+        })
+        .await;
+
         drop(tracker);
         presence::sign_off(&buddy).await;
         wait_for_buddies(&mut rx, "the buddy offline again", |b| {
-            section_of(b) == Some((Section::Offline, Some(presence::Presence::Offline)))
+            status_of(b) == Some((Section::Offline, Some(Offline), None))
         })
         .await;
 
@@ -2274,19 +2335,20 @@ mod tests {
                 panic!("{e} (start it with `docker compose -f dev/docker-compose.yml --profile no-presence up -d`)")
             });
         // Find out the way the Buddy List does.
-        let (changed, mut changes) = tokio::sync::mpsc::unbounded_channel();
-        let tracker = presence::Tracker::new(alice.clone(), Duration::from_secs(1), changed);
-        tokio::time::timeout(Duration::from_secs(10), changes.recv())
-            .await
-            .unwrap();
-        assert_eq!(tracker.supported(), Some(false));
+        let tracker = presence::Tracker::new(alice.clone(), Duration::from_secs(1));
+        assert!(!wait_for_support(&tracker).await);
         assert_eq!(tracker.get(alice.user_id().unwrap()), None);
+        assert_eq!(
+            tracker.set_away(Some("Out to lunch")).await,
+            Err("This server doesn't support away messages.".to_owned())
+        );
+        assert_eq!(tracker.own().away, None);
 
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let watcher = rooms::watch_every(
+        let watcher = rooms::watch(
             syncing.room_list_service(),
-            Duration::from_secs(1),
+            presence::Tracker::new(alice.clone(), Duration::from_secs(1)),
             move |b| {
                 let _ = tx.send(b);
             },

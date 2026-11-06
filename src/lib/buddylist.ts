@@ -12,7 +12,23 @@ export type Buddy = {
   icon: string | null;
   /** The other person's presence, for a joined DM. Null when the server has no presence. */
   presence: Presence | null;
+  /** The other person's status message, shown as their away message. */
+  awayMessage: string | null;
 };
+
+/** Hover text for a buddy: their presence and away message. */
+export function buddyTooltip(buddy: Buddy): string | undefined {
+  switch (buddy.presence) {
+    case "away":
+      return buddy.awayMessage ? `${buddy.name} is away:\n${buddy.awayMessage}` : `${buddy.name} is away.`;
+    case "offline":
+      return `${buddy.name} is offline.`;
+    case "online":
+      return buddy.awayMessage ?? undefined;
+    default:
+      return undefined;
+  }
+}
 
 export type Presence = "online" | "away" | "offline";
 

@@ -2,7 +2,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { page } from "$app/state";
-  import { watchBuddyList } from "$lib/buddylist";
+  import { watchBuddyList, type Presence } from "$lib/buddylist";
   import { watchTyping } from "$lib/timeline";
   import { DEFAULT_CHAT_ICON, DEFAULT_DM_ICON } from "$lib/icons";
   import Transcript from "$lib/conversation/Transcript.svelte";
@@ -12,6 +12,8 @@
   const roomId = page.url.searchParams.get("room") ?? "";
   let name = $state("");
   let kind = $state<"dm" | "group">("dm");
+  let presence = $state<Presence | null>(null);
+  let awayMessage = $state<string | null>(null);
   /** Has messages you haven't read, per the Buddy List. */
   let unread = $state(false);
   let error = $state("");
@@ -34,6 +36,8 @@
       name = buddy.name;
       kind = buddy.kind;
       unread = buddy.unread;
+      presence = buddy.presence;
+      awayMessage = buddy.awayMessage;
       if (buddy.icon !== listIcon) {
         listIcon = buddy.icon;
         loadBuddyIcon();
@@ -58,6 +62,11 @@
 
 <div class="layout">
   <main class="aim-window__body">
+    {#if presence === "away"}
+      <p class="aim-away-banner" role="status">
+        <b>{name} is away</b>{awayMessage ? `: ${awayMessage}` : "."}
+      </p>
+    {/if}
     <div class="row grow">
       <Transcript {roomId} {unread} bind:loading bind:saving bind:notice bind:error />
       <img

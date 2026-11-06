@@ -78,7 +78,7 @@
           <summary>Online <span class="aim-group__count">(2)</span></summary>
           <ul class="aim-list">
             <li><button class="aim-list__item is-selected is-unread"><img class="aim-list__icon" src={bob} alt="" />Bob Brown</button></li>
-            <li><button class="aim-list__item is-away"><img class="aim-list__icon" src={none} alt="" />Carol Chen (away)</button></li>
+            <li><button class="aim-list__item is-away" title={"Carol Chen is away:\nAt the dentist, back by 3."}><img class="aim-list__icon" src={none} alt="" />Carol Chen (away)</button></li>
           </ul>
         </details>
         <details class="aim-group" open>
@@ -105,6 +105,11 @@
             <li><button class="aim-list__item is-offline"><img class="aim-list__icon" src={none} alt="" />Dave</button></li>
           </ul>
         </details>
+      </div>
+      <div class="row" style="align-items: center; gap: 4px">
+        <span class="grow" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">You're away: Out to lunch, back soon!</span>
+        <button class="aim-btn aim-btn--small">Edit…</button>
+        <button class="aim-btn aim-btn--small">I'm Back</button>
       </div>
       <div class="row" style="align-items: center; gap: 4px">
         <span class="grow">🔒 This computer isn't verified.</span>
@@ -195,6 +200,27 @@
     </div>
   </section>
 
+  <!-- Away Message -->
+  <section class="aim-window" style="width: 300px; height: 220px">
+    <div class="aim-titlebar">
+      <img class="aim-titlebar__icon" src={appIcon} alt="" />
+      <span class="aim-titlebar__title">Away Message</span>
+      <div class="aim-titlebar__controls">
+        <button class="aim-titlebar__btn aim-titlebar__btn--close" aria-label="Close"></button>
+      </div>
+    </div>
+    <div class="aim-window__body">
+      <label class="aim-label grow">
+        Away message, shown to buddies while you're away:
+        <textarea class="aim-field grow">I am away from my computer right now.</textarea>
+      </label>
+      <div class="row end">
+        <button class="aim-btn">Cancel</button>
+        <button class="aim-btn is-default">I'm Away</button>
+      </div>
+    </div>
+  </section>
+
   <!-- IM window -->
   <section class="aim-window" style="width: 360px; height: 340px">
     <div class="aim-titlebar">
@@ -207,6 +233,7 @@
       </div>
     </div>
     <div class="aim-window__body">
+      <p class="aim-away-banner"><b>Bob Brown is away</b>: Gone fishing. Leave a message!</p>
       <div class="row grow">
         <div class="aim-panel aim-transcript">
           <p class="aim-msg"><span class="aim-msg__name aim-msg__name--self">Alice Anderson:</span> hey bob, you there?</p>

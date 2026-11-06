@@ -56,6 +56,24 @@ pub fn open_recovery(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Label of the Away Message window.
+pub const AWAY_LABEL: &str = "away";
+
+/// Away Message: set an away message and go away.
+pub fn open_away(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(AWAY_LABEL) {
+        window.unminimize()?;
+        return window.set_focus();
+    }
+    WebviewWindowBuilder::new(app, AWAY_LABEL, WebviewUrl::App("/away".into()))
+        .title("Away Message")
+        .inner_size(320.0, 240.0)
+        .resizable(false)
+        .center()
+        .build()?;
+    Ok(())
+}
+
 /// Label of the Set Up Recovery window.
 pub const SETUP_RECOVERY_LABEL: &str = "setup-recovery";
 

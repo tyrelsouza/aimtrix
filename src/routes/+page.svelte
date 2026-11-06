@@ -4,7 +4,8 @@
   import { describe, watchSyncStatus, type SyncStatus } from "$lib/sync";
   import { watchRecovery, type Recovery } from "$lib/recovery";
   import { watchTrust, type Trust } from "$lib/verify";
-  import { visibleSections, watchBuddyList, type Buddy } from "$lib/buddylist";
+  import { buddyTooltip, visibleSections, watchBuddyList, type Buddy } from "$lib/buddylist";
+  import { watchOwnPresence, type OwnPresence } from "$lib/presence";
   import { DEFAULT_CHAT_ICON, DEFAULT_DM_ICON } from "$lib/icons";
 
   let userId = $state<string | null>(null);
@@ -12,6 +13,7 @@
   let buddies = $state<Buddy[]>([]);
   let recovery = $state<Recovery>("unknown");
   let trust = $state<Trust>("unknown");
+  let own = $state<OwnPresence>({ supported: null, away: null });
   let selected = $state<string | null>(null);
   /** Invitations being accepted or declined. */
   let responding = $state<string[]>([]);
@@ -23,6 +25,16 @@
   $effect(() => watchBuddyList((b) => (buddies = b)));
   $effect(() => watchRecovery((r) => (recovery = r)));
   $effect(() => watchTrust((t) => (trust = t)));
+  $effect(() => watchOwnPresence((p) => (own = p)));
+
+  async function comeBack() {
+    error = "";
+    try {
+      await invoke("set_away", { message: null });
+    } catch (e) {
+      error = String(e);
+    }
+  }
 
   async function verify() {
     error = "";
@@ -96,6 +108,7 @@
                   class:is-unread={room.unread}
                   class:is-away={room.presence === "away"}
                   class:is-offline={room.presence === "offline"}
+                  title={buddyTooltip(room)}
                   onclick={() => (selected = room.roomId)}
                   ondblclick={() => openRoom(room)}
                 >
@@ -133,6 +146,13 @@
     {#if error}
       <p class="aim-alert" role="alert">{error}</p>
     {/if}
+    {#if own.away}
+      <p class="away">
+        <span class="grow" title={own.away}>You're away: {own.away}</span>
+        <button class="aim-btn aim-btn--small" onclick={() => invoke("open_away")}>Edit…</button>
+        <button class="aim-btn aim-btn--small" onclick={comeBack}>I'm Back</button>
+      </p>
+    {/if}
     {#if trust === "unverified" || recovery === "incomplete" || recovery === "disabled"}
       <p class="security">
         <span class="grow">
@@ -153,7 +173,17 @@
       </p>
     {/if}
     <div class="buttons">
-      <button class="aim-btn" onclick={signOff} disabled={busy}>Sign Off</button>
+      <span class="row">
+        <button class="aim-btn" onclick={signOff} disabled={busy}>Sign Off</button>
+        <button
+          class="aim-btn"
+          onclick={() => invoke("open_away")}
+          disabled={own.supported !== true || own.away !== null}
+          title={own.supported === false ? "This server doesn't support away messages." : undefined}
+        >
+          Away…
+        </button>
+      </span>
       {#if import.meta.env.DEV}
         <a href="/demo">Style demo</a>
       {/if}
@@ -186,13 +216,23 @@
     /* Line up with the room name, past the icon. */
     padding: 1px 0 3px 38px;
   }
-  .security {
+  .security,
+  .away {
     display: flex;
     align-items: center;
     gap: 4px;
   }
   .grow {
     flex: 1;
+  }
+  .away .grow {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .row {
+    display: flex;
+    gap: 4px;
   }
   .buttons {
     display: flex;

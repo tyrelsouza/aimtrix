@@ -13,6 +13,7 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 | Sign On | Password sign-on to any homeserver. The session is kept in the OS keyring, so the next launch skips sign-on. |
 | Buddy List | Your rooms, in groups: Favorites (`m.favourite`), Buddies (DMs), Chats (rooms with several people) and Invitations, most recent first. Unread rooms are bold. |
 | Online / Offline | On servers with presence, Buddies splits into Online and Offline. Servers without presence (matrix.org, for one) keep a single Buddies group. |
+| Away message | Set one from the Buddy List. Buddies' away messages show on hover and in the IM window. Needs a server with presence. |
 | IM window | One window per DM, with Buddy Icons, rich text (bold, italic, fonts, colors), "is typing…", read receipts, images, files, edits, deletions and replies. |
 | Chat Room window | Member list, topic, and "X has entered the room" lines. |
 | Buddy Icon | Profile pictures, with original default icons. |
@@ -24,7 +25,7 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 - Emoji verification works against your other sessions.
 - Accounts without recovery can set it up.
 
-Coming next (Phase 6 in `PLAN.md`): away messages, original sounds with mute, Add Buddy, Block, a Preferences window, auto-reply and Linux packages.
+Coming next (Phase 6 in `PLAN.md`): original sounds with mute, Add Buddy, Block, a Preferences window, auto-reply and Linux packages.
 
 What counts as a DM: a room listed in `m.direct`, or one with at most two members. Tag a room `aimtrix.chat` to make it open as a Chat Room anyway.
 
@@ -71,3 +72,7 @@ In a development build, the Buddy List has a "Style demo" link to `/demo`, which
 - **Windows** (`src/`): SvelteKit (Svelte 5, TypeScript) with one route per window type and hand-written CSS in `src/styles/aim-chrome.css`. Windows hold no Matrix code. They call Tauri commands (`src-tauri/src/commands.rs`) and listen for events such as `buddylist:update` and `room:<id>:timeline_diff`.
 
 [`PLAN.md`](PLAN.md) has the full design and how each AIM idea maps to Matrix. [`CLAUDE.md`](CLAUDE.md) has the working rules for the code.
+
+## License
+
+Closed source for now. All rights reserved.
