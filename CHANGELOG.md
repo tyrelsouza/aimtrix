@@ -19,6 +19,7 @@ What changed in each phase of `PLAN.md`, step by step. Open problems live under 
   - `sign_on_methods` reads the server's login flows and `/auth_metadata`. `sign_on_with_browser` uses the SDK's OAuth (dynamic client registration, authorization code with PKCE) with a loopback redirect from the SDK's `local-server`; the address is registered without its port (RFC 8252), which continuwuity requires. The browser opens with `tauri-plugin-opener`, so the `.deb` now depends on `xdg-utils`.
   - The keyring holds either kind of session (`SavedAuth`); sessions saved before still load. `sync` saves refreshed tokens (`save_refreshed_tokens`), under a lock so a refresh during Sign Off can't bring the session back. The SDK only revokes over https, so on plain-http servers AIMtrix revokes the token itself.
   - The dev MAS has a Dex container, "Dev Provider (like Google)", whose account `dana` has no password, and 60-second access tokens so refresh happens while testing. continuwuity advertises its dev address for OAuth. Tests play the browser on both servers: no-password sign-on, refresh, restart, sign-off, refusing, cancelling.
+- **7.5 matrix.org.** Checked by hand with a real matrix.org account: signing on with a password and with **Use Browser…** both work.
 
 ## Phase 6: AIM extras
 
