@@ -52,6 +52,14 @@ jobs:
       - name: Rust unit tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      # Also refuses crates under licenses not accepted in about.toml.
+      - name: Third-party licenses are up to date
+        if: runner.os == 'Linux'
+        run: |
+          # The same version as locally: others can word the file differently.
+          cargo install --locked cargo-about@0.9.3 --features cli
+          node dev/third-party-licenses.mjs --check
+
       - name: Release build
         run: npm run tauri build -- --no-bundle
 

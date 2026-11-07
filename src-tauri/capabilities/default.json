@@ -11,7 +11,8 @@
     "setup-recovery",
     "away",
     "add-buddy",
-    "preferences"
+    "preferences",
+    "about"
   ],
   "permissions": [
     "core:default",

@@ -57,6 +57,8 @@ pub fn run() {
             commands::cancel_upload,
             commands::open_add_buddy,
             commands::open_preferences,
+            commands::open_about,
+            commands::open_license,
             commands::get_preferences,
             commands::set_preferences,
             commands::block_buddy,

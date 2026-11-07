@@ -12,6 +12,10 @@ run = ["npm run check", "cargo test --manifest-path src-tauri/Cargo.toml"]
 description = "All Rust tests, including those against the dev homeservers (start them first)"
 run = "cargo test --manifest-path src-tauri/Cargo.toml -- --include-ignored --test-threads=8"
 
+[tasks.licenses]
+description = "Regenerate src-tauri/THIRD-PARTY-LICENSES.html (needs cargo-about) after changing dependencies"
+run = "node dev/third-party-licenses.mjs"
+
 [tasks.version]
 description = "Print the next build's version (0.0.1-<seconds since midnight UTC>)"
 run = "node dev/set-version.mjs"

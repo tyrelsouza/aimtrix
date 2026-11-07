@@ -2,6 +2,13 @@
 
 What changed in each phase of `PLAN.md`, step by step. Open problems live under "Known issues and follow-ups" in `PLAN.md`.
 
+## Phase 8: Cross-platform
+
+### Changes
+- **MIT license.** AIMtrix is now MIT licensed (`LICENSE`). A new **About…** button in Preferences opens About AIMtrix, with the version, the license and **Third-Party…**, the licenses of everything AIMtrix is built with, which every package now includes.
+  - `src-tauri/THIRD-PARTY-LICENSES.html` covers the 599 Rust crates shipped on Linux, macOS and Windows (from `cargo about`, which also refuses licenses not listed in `src-tauri/about.toml`) and the npm packages compiled into the frontend. `mise run licenses` regenerates it; CI fails when it's out of date.
+  - The AppImage now carries `usr/share/doc/aimtrix/BUNDLED-LIBRARIES.txt`: the 113 Ubuntu packages whose libraries it bundles, with links to their source and their license and copyright notices (`dev/appimage-notices.sh`, run by the package build and the release workflow, which also attaches it to releases).
+
 ## Phase 7: Other servers and sign-in
 
 ### Changes
