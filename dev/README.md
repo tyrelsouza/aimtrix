@@ -19,6 +19,7 @@ AIMTRIX_HS=http://localhost:8009 python3 dev/seed.py
 |---|---|
 | Homeserver | `http://localhost:8008` (server name `localhost`, presence on) |
 | Homeserver without presence | `http://localhost:8009` (same users and rooms once seeded; `synapse/no-presence.yaml` overrides `homeserver.yaml`) |
+| Fake old homeserver | `http://localhost:8010`, from `python3 dev/old-server.py`: no simplified sliding sync, so AIMtrix should refuse to sign on |
 | Element Web | `http://localhost:8080`, the "other person" to chat with AIMtrix |
 | Users | `alice`, `bob`, `carol`, password `aimtrix-test` |
 

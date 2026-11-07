@@ -82,6 +82,7 @@ pub async fn start(
     let mut session_changes = client.subscribe_to_session_changes();
     let watcher = spawn({
         let service = service.clone();
+        let client = client.clone();
         async move {
             loop {
                 tokio::select! {
@@ -91,7 +92,11 @@ pub async fn start(
                         State::Offline => on_status(Status::Offline),
                         State::Terminated => {}
                         State::Error(e) => {
-                            on_status(Status::Error(e.to_string()));
+                            let message = match super::sliding_sync_gone(&client).await {
+                                Some(reason) => reason,
+                                None => e.to_string(),
+                            };
+                            on_status(Status::Error(message));
                             tokio::time::sleep(RETRY_AFTER).await;
                             service.start().await;
                         }

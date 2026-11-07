@@ -19,9 +19,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use matrix_sdk::reqwest::Url;
 use matrix_sdk::{
     Client,
-    ruma::api::error::{ErrorBody, ErrorKind},
+    ruma::api::{
+        FeatureFlag,
+        error::{ErrorBody, ErrorKind},
+    },
 };
 use rand::distr::{Alphanumeric, SampleString};
 use tauri::async_runtime::{Mutex, spawn_blocking};
@@ -85,7 +89,14 @@ pub async fn sign_on(
     remove_store(&store)?;
     let passphrase = Alphanumeric.sample_string(&mut rand::rng(), 32);
 
-    let client = login(&store, &passphrase, homeserver, username, password).await?;
+    let client = match login(&store, &passphrase, homeserver, username, password).await {
+        Ok(client) => client,
+        Err(e) => {
+            // Leave nothing behind from a sign-on that didn't happen.
+            let _ = remove_store(&store);
+            return Err(e);
+        }
+    };
     let saved = SavedSession {
         homeserver: client.homeserver().to_string(),
         store_passphrase: passphrase,
@@ -149,6 +160,8 @@ async fn login(
         .build()
         .await
         .map_err(|e| format!("Couldn't reach homeserver: {}", with_causes(&e)))?;
+    // Before logging in, so an unsupported server gets no device.
+    check_sliding_sync(&client).await?;
 
     client
         .matrix_auth()
@@ -170,6 +183,42 @@ async fn login(
         })?;
 
     Ok(client)
+}
+
+/// AIMtrix syncs only with simplified sliding sync (MSC4186), and the SDK
+/// can't fall back to the older `/sync`, so refuse servers without it
+/// instead of signing on and failing every sync.
+async fn check_sliding_sync(client: &Client) -> Result<(), String> {
+    let features = client
+        .unstable_features()
+        .await
+        .map_err(|e| format!("Couldn't reach homeserver: {}", with_causes(&e)))?;
+    if features.contains(&FeatureFlag::Msc4186) {
+        Ok(())
+    } else {
+        Err(unsupported_server(&client.homeserver()))
+    }
+}
+
+/// Why syncing fails, if it's because the server (no longer) supports
+/// simplified sliding sync. Asks the server again rather than trusting the
+/// cached answer from sign-on.
+pub(crate) async fn sliding_sync_gone(client: &Client) -> Option<String> {
+    let _ = client.reset_supported_versions().await;
+    let features = client.unstable_features().await.ok()?;
+    (!features.contains(&FeatureFlag::Msc4186)).then(|| unsupported_server(&client.homeserver()))
+}
+
+fn unsupported_server(homeserver: &Url) -> String {
+    let server = match (homeserver.host_str(), homeserver.port()) {
+        (Some(host), Some(port)) => format!("{host}:{port}"),
+        (Some(host), None) => host.to_owned(),
+        _ => homeserver.to_string(),
+    };
+    format!(
+        "{server} doesn't support simplified sliding sync (MSC4186), which AIMtrix needs. \
+         Ask its admin, or use another server."
+    )
 }
 
 /// An error and what caused it, e.g. "builder error: no CA certificates
@@ -302,6 +351,73 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.starts_with("Couldn't reach homeserver"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn login_refuses_servers_without_simplified_sliding_sync() {
+        let (homeserver, requests) = old_server().await;
+        let dir = tempfile::tempdir().unwrap();
+        let err = login(dir.path(), PASS, &homeserver, "alice", "x")
+            .await
+            .unwrap_err();
+        let host = homeserver.trim_start_matches("http://");
+        assert_eq!(
+            err,
+            format!(
+                "{host} doesn't support simplified sliding sync (MSC4186), which AIMtrix \
+                 needs. Ask its admin, or use another server."
+            )
+        );
+        // Refused before logging in, so the server never made a device.
+        let requests = requests.lock().unwrap();
+        assert!(
+            requests.iter().all(|path| !path.contains("/login")),
+            "{requests:?}"
+        );
+    }
+
+    /// A homeserver speaking only the older sync: `/versions` without
+    /// `org.matrix.simplified_msc3575`, and 404 for everything else. Returns
+    /// its URL and the paths it was asked for.
+    async fn old_server() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = requests.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0; 8192];
+                    let Ok(n) = stream.read(&mut buf).await else {
+                        return;
+                    };
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let path = request.split(' ').nth(1).unwrap_or("").to_owned();
+                    let (status, body) = if path == "/_matrix/client/versions" {
+                        (
+                            "200 OK",
+                            r#"{"versions":["v1.11","v1.12"],"unstable_features":{"org.matrix.msc3575":true}}"#,
+                        )
+                    } else {
+                        (
+                            "404 Not Found",
+                            r#"{"errcode":"M_UNRECOGNIZED","error":"Unrecognized request"}"#,
+                        )
+                    };
+                    seen.lock().unwrap().push(path);
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\n\
+                         Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        (url, requests)
     }
 
     #[tokio::test]

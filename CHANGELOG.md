@@ -2,6 +2,13 @@
 
 What changed in each phase of `PLAN.md`, step by step. Open problems live under "Known issues and follow-ups" in `PLAN.md`.
 
+## Phase 7: Other servers and sign-in
+
+### Changes
+- **7.1 Unsupported servers.** Signing on to a server without simplified sliding sync (MSC4186) now says so ("example.org doesn't support simplified sliding sync (MSC4186), which AIMtrix needs. Ask its admin, or use another server.") instead of signing on and failing every sync. The check runs before logging in, so the server gets no device and nothing is saved. If a resumed session's server loses support, the Buddy List status bar shows the same message instead of a raw sync error.
+  - `check_sliding_sync` in `matrix/mod.rs` reads `/versions`; sync errors ask again with the cached answer cleared (`sliding_sync_gone`). Any failed sign-on now also deletes the store it created.
+  - `dev/old-server.py` is a fake homeserver without the feature, on `http://localhost:8010`, for checking it by hand. A unit test runs a similar fake server and checks no `/login` is sent.
+
 ## Phase 6: AIM extras
 
 ### Changes
