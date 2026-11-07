@@ -42,8 +42,8 @@ jobs:
 
       - run: npm ci
 
-      # Quick check only; the tests belong in CI (PLAN.md 8.1), and running
-      # them here would about double the build minutes.
+      # Quick check only; the tests run in CI (ci.yml) on every push, and
+      # running them here would about double the build minutes.
       - run: npm run check
 
       - name: Build

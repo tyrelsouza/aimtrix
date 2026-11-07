@@ -1,0 +1,111 @@
+# Checks pull requests and main: the frontend type-check, the Rust unit tests and a
+# release build (without installers; those are PLAN.md 8.5), plus the
+# server tests against every dev homeserver in Docker, as
+# `mise run test-server` does locally. All on Linux; macOS and Windows also
+# build on pushes to main, since the repo is private and their runner
+# minutes cost 10x and 2x.
+name: CI
+
+# Pull requests, and pushes to main (which a pull request's checks don't
+# cover once merged). A push to a branch with a pull request would
+# otherwise run everything twice.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch replaces a run still going.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux on 22.04, like the release builds.
+        os: >-
+          ${{ fromJSON(github.event_name == 'push' && github.ref == 'refs/heads/main'
+          && '["ubuntu-22.04", "macos-latest", "windows-latest"]'
+          || '["ubuntu-22.04"]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            librsvg2-dev libssl-dev libxdo-dev libayatana-appindicator3-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - run: npm run check
+
+      - name: Rust unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Release build
+        run: npm run tauri build -- --no-bundle
+
+  server-tests:
+    name: Server tests (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            librsvg2-dev libssl-dev libxdo-dev libayatana-appindicator3-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Every dev server: some tests always use a particular one. Element
+      # Web isn't needed.
+      - name: Start the dev homeservers
+        run: |
+          docker compose -f dev/docker-compose.yml \
+            --profile no-presence --profile continuwuity --profile mas \
+            up -d --wait \
+            synapse synapse-no-presence continuwuity \
+            synapse-mas mas-db mas dex mas-proxy
+
+      # Build while the servers settle.
+      - name: Build the tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-run
+
+      - name: Seed the dev homeservers
+        run: |
+          python3 dev/seed.py
+          AIMTRIX_HS=http://localhost:8009 python3 dev/seed.py
+          AIMTRIX_HS=http://localhost:8011 python3 dev/seed.py
+          AIMTRIX_HS=http://localhost:8013 python3 dev/seed.py
+
+      - name: Server tests
+        run: >
+          cargo test --manifest-path src-tauri/Cargo.toml --
+          --include-ignored --test-threads=8
+
+      - name: Server logs
+        if: failure()
+        run: docker compose -f dev/docker-compose.yml --profile no-presence --profile continuwuity --profile mas logs --tail 200
