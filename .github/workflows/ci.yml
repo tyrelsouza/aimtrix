@@ -1,7 +1,9 @@
-# Checks every push on Linux, macOS and Windows: the frontend type-check,
-# the Rust unit tests and a release build (without installers; those are
-# PLAN.md 8.5). On Linux, the server tests also run against every dev
-# homeserver in Docker, as `mise run test-server` does locally.
+# Checks every push: the frontend type-check, the Rust unit tests and a
+# release build (without installers; those are PLAN.md 8.5), plus the
+# server tests against every dev homeserver in Docker, as
+# `mise run test-server` does locally. All on Linux; macOS and Windows build
+# only on pushes to main, since the repo is private and their runner
+# minutes cost 10x and 2x.
 name: CI
 
 on:
@@ -20,7 +22,10 @@ jobs:
       fail-fast: false
       matrix:
         # Linux on 22.04, like the release builds.
-        os: [ubuntu-22.04, macos-latest, windows-latest]
+        os: >-
+          ${{ fromJSON(github.event_name == 'push' && github.ref == 'refs/heads/main'
+          && '["ubuntu-22.04", "macos-latest", "windows-latest"]'
+          || '["ubuntu-22.04"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
