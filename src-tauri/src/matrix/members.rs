@@ -124,10 +124,19 @@ fn drain(rx: &mut UnboundedReceiver<()>) {
 /// the server; sync keeps them current after that.
 async fn list(room: &Room, icons: &Arc<Icons>) -> Result<Vec<Member>, String> {
     let own = room.own_user_id().to_owned();
-    let mut members: Vec<Member> = room
-        .members(RoomMemberships::JOIN)
-        .await
-        .map_err(|e| format!("Couldn't load who's in {}: {e}", room.room_id()))?
+    let load = async || {
+        room.members(RoomMemberships::JOIN)
+            .await
+            .map_err(|e| format!("Couldn't load who's in {}: {e}", room.room_id()))
+    };
+    let mut joined = load().await?;
+    // Some servers (continuwuity) don't sync member changes as state, only
+    // the count; see `sync::notice_member_changes`. Reload when they differ.
+    if joined.len() as u64 != room.joined_members_count() {
+        room.mark_members_missing();
+        joined = load().await?;
+    }
+    let mut members: Vec<Member> = joined
         .iter()
         .map(|m| member(m, *m.user_id() == own, icons))
         .collect();

@@ -10,13 +10,16 @@ running app keeps its session), and never touches other devices (Element).
 
   python3 dev/clean-devices.py            # remove them
   python3 dev/clean-devices.py --dry-run  # just count
+
+Set AIMTRIX_HS for another dev server, as with dev/seed.py.
 """
 import json
+import os
 import sys
 import time
 import urllib.request
 
-HS = "http://localhost:8008"
+HS = os.environ.get("AIMTRIX_HS", "http://localhost:8008")
 USERS = ["alice", "bob", "carol"]
 PASSWORD = "aimtrix-test"
 KEEP_SEEN_WITHIN_MS = 60 * 60 * 1000

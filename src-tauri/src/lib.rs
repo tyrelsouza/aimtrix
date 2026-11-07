@@ -14,7 +14,9 @@ use tauri::{AppHandle, Manager};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(matrix::Session::default())
+        .manage(commands::BrowserSignOn::default())
         .setup(|app| {
             app.manage(preferences::Store::open(app.handle())?);
             let app = app.handle().clone();
@@ -29,6 +31,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::login,
+            commands::sign_on_methods,
+            commands::login_with_browser,
+            commands::cancel_browser_login,
             commands::logout,
             commands::whoami,
             commands::sync_status,

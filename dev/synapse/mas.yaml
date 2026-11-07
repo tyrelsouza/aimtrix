@@ -1,0 +1,9 @@
+# Overrides homeserver.yaml for the Synapse behind MAS (the `mas` compose
+# profile): auth is delegated to MAS (dev/mas/config.yaml), as on matrix.org.
+public_baseurl: "http://localhost:8013/"
+matrix_authentication_service:
+  enabled: true
+  endpoint: http://mas:8080/
+  secret: aimtrix-dev-mas-synapse-secret
+# Accounts live in MAS now.
+registration_shared_secret: null

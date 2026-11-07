@@ -45,7 +45,7 @@
       </fieldset>
       <p class="aim-alert" role="alert">Incorrect screen name or password.</p>
       <div class="row end">
-        <button class="aim-btn">Setup</button>
+        <button class="aim-btn" title="Shown when the server offers OAuth">Use Browser…</button>
         <button class="aim-btn is-default">Sign On</button>
       </div>
     </div>

@@ -10,7 +10,7 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 
 | AIM | AIMtrix on Matrix |
 |---|---|
-| Sign On | Password sign-on to any homeserver. The session is kept in the OS keyring, so the next launch skips sign-on. |
+| Sign On | Password sign-on to any homeserver, or in your web browser where the server supports it (OAuth: matrix.org, for accounts made with Google, GitHub or Apple). Servers that can't work with AIMtrix are refused with an explanation. The session is kept in the OS keyring, so the next launch skips sign-on. |
 | Buddy List | Your rooms, in groups: Favorites (`m.favourite`), Buddies (DMs), Chats (rooms with several people) and Invitations, most recent first. Unread rooms are bold. |
 | Online / Offline | On servers with presence, Buddies splits into Online and Offline. Servers without presence (matrix.org, for one) keep a single Buddies group. |
 | Away message | Set one from the Buddy List. Buddies' away messages show on hover and in the IM window. Needs a server with presence. |
@@ -30,7 +30,7 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 - Emoji verification works against your other sessions.
 - Accounts without recovery can set it up.
 
-Coming next (see `PLAN.md`): other server software, matrix.org testing and browser (OAuth) sign-on; macOS and Windows; and last, original sounds with mute.
+Coming next (see `PLAN.md`): checking matrix.org with real accounts; macOS and Windows; and last, original sounds with mute.
 
 What counts as a DM: a room listed in `m.direct`, or one with at most two members. Tag a room `aimtrix.chat` to make it open as a Chat Room anyway.
 
@@ -60,7 +60,7 @@ docker compose -f dev/docker-compose.yml up -d
 python3 dev/seed.py
 ```
 
-This starts Synapse at `http://localhost:8008` and Element Web at `http://localhost:8080`, to play the other side of a conversation. The seed script creates the users `alice`, `bob` and `carol` (password `aimtrix-test`) and the test rooms. A second Synapse with presence turned off runs at `http://localhost:8009`. See [`dev/README.md`](dev/README.md) for both servers and the seeded rooms.
+This starts Synapse at `http://localhost:8008` and Element Web at `http://localhost:8080`, to play the other side of a conversation. The seed script creates the users `alice`, `bob` and `carol` (password `aimtrix-test`) and the test rooms. Optional profiles add a Synapse with presence turned off (`http://localhost:8009`), continuwuity (`http://localhost:8011`) and a Synapse behind Matrix Authentication Service, like matrix.org (`http://localhost:8013`). See [`dev/README.md`](dev/README.md) for all of them and the seeded rooms.
 
 Checks:
 

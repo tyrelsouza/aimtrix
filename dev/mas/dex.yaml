@@ -1,0 +1,26 @@
+# A stand-in for Google, GitHub or Apple: an outside sign-in provider for the
+# dev MAS. Accounts made through it have no Matrix password, so they can
+# only sign on in the browser (PLAN.md 7.4). NOT for production.
+#
+# The browser reaches Dex on localhost:5556; MAS reaches it as dex:5556
+# (see `upstream_oauth2` in config.yaml).
+issuer: http://localhost:5556/dex
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+oauth2:
+  skipApprovalScreen: true
+staticClients:
+  - id: aimtrix-dev-mas
+    secret: aimtrix-dev-dex-secret
+    name: AIMtrix dev MAS
+    redirectURIs: ["http://localhost:8014/upstream/callback/01JA1MTR1XDEXVPSTREAM00000"]
+enablePasswordDB: true
+# Sign in with "dana@example.com" / "aimtrix-test".
+staticPasswords:
+  - email: dana@example.com
+    # bcrypt of "aimtrix-test"
+    hash: "$2a$10$3dYnk84naWlq0VEgopAKj.bQpkm3iKQBjbtf1AGc.wUvpaYlqgL3."
+    username: dana
+    userID: 9b0f7c8e-0d1e-4c7a-9a52-aimtrixdana0

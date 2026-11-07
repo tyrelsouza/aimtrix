@@ -2,7 +2,10 @@
 
 use std::{sync::Arc, time::Duration};
 
-use matrix_sdk::{Client, SessionChange};
+use matrix_sdk::{
+    Client, Room, SessionChange, event_handler::EventHandlerHandle,
+    ruma::events::room::member::SyncRoomMemberEvent,
+};
 use matrix_sdk_ui::{
     RoomListService,
     sync_service::{State, SyncService},
@@ -36,6 +39,8 @@ pub enum Status {
 pub struct Syncing {
     service: Arc<SyncService>,
     watcher: JoinHandle<()>,
+    client: Client,
+    members: EventHandlerHandle,
 }
 
 impl Syncing {
@@ -46,6 +51,7 @@ impl Syncing {
     pub async fn stop(self) {
         // Stop reporting first so stopping doesn't show up as a status change.
         self.watcher.abort();
+        self.client.remove_event_handler(self.members);
         // matrix-sdk 0.19 loses a stop request sent before the room list sync
         // starts listening for one, which happens on its first poll, and then
         // waits for it forever. Stopping right after starting (e.g. signing
@@ -82,6 +88,7 @@ pub async fn start(
     let mut session_changes = client.subscribe_to_session_changes();
     let watcher = spawn({
         let service = service.clone();
+        let client = client.clone();
         async move {
             loop {
                 tokio::select! {
@@ -91,21 +98,57 @@ pub async fn start(
                         State::Offline => on_status(Status::Offline),
                         State::Terminated => {}
                         State::Error(e) => {
-                            on_status(Status::Error(e.to_string()));
+                            let message = match super::sliding_sync_gone(&client).await {
+                                Some(reason) => reason,
+                                None => e.to_string(),
+                            };
+                            on_status(Status::Error(message));
                             tokio::time::sleep(RETRY_AFTER).await;
                             service.start().await;
                         }
                     },
-                    Ok(SessionChange::UnknownToken(_)) = session_changes.recv() => {
-                        on_status(Status::SignedOut);
-                        break;
-                    }
+                    Ok(change) = session_changes.recv() => match change {
+                        SessionChange::UnknownToken(_) => {
+                            on_status(Status::SignedOut);
+                            break;
+                        }
+                        // OAuth access tokens expire; keep the new ones.
+                        SessionChange::TokensRefreshed => {
+                            if let Err(e) = super::save_refreshed_tokens(&client).await {
+                                eprintln!("{e}");
+                            }
+                        }
+                    },
                     else => break,
                 }
             }
         }
     });
 
+    let members = client.add_event_handler(notice_member_changes);
     service.start().await;
-    Ok(Syncing { service, watcher })
+    Ok(Syncing {
+        service,
+        watcher,
+        client: client.clone(),
+        members,
+    })
+}
+
+/// Sliding sync stores only the state in `required_state`, where servers
+/// should also put the member events of the timeline. continuwuity leaves
+/// them out, so the SDK would never learn who joined or left: Chat Room
+/// member lists go stale, and room keys skip people who joined later. When a
+/// member event doesn't match the stored member, have the SDK reload the
+/// room's members from the server before it next needs them. On servers
+/// that send the state it always matches, so this does nothing.
+async fn notice_member_changes(event: SyncRoomMemberEvent, room: Room) {
+    let user = event.state_key();
+    let stored = match room.get_member_no_sync(user).await {
+        Ok(member) => member.map(|m| m.membership().clone()),
+        Err(_) => None,
+    };
+    if stored.as_ref() != Some(event.membership()) {
+        room.mark_members_missing();
+    }
 }

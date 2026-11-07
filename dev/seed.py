@@ -16,6 +16,7 @@ Creates:
 Only the Python standard library is used.
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -30,6 +31,11 @@ import zlib
 
 HS = os.environ.get("AIMTRIX_HS", "http://localhost:8008")
 SHARED_SECRET = os.environ.get("AIMTRIX_SHARED_SECRET", "aimtrix-dev-secret")
+# For servers without Synapse's admin API (continuwuity).
+REGISTRATION_TOKEN = os.environ.get("AIMTRIX_REGISTRATION_TOKEN", "aimtrix-dev-token")
+# For servers whose accounts live in Matrix Authentication Service: its
+# admin client (dev/mas/config.yaml).
+MAS_ADMIN_CLIENT = ("01JA1MTR1XDEVADM1NC11ENT00", "aimtrix-dev-admin-secret")
 PASSWORD = os.environ.get("AIMTRIX_PASSWORD", "aimtrix-test")
 SERVER_NAME = "localhost"
 
@@ -79,7 +85,8 @@ def mxid(user):
 def wait_for_server():
     for _ in range(60):
         try:
-            urllib.request.urlopen(HS + "/health").read()
+            # Not /health: only Synapse has it.
+            urllib.request.urlopen(HS + "/_matrix/client/versions").read()
             return
         except OSError:
             time.sleep(1)
@@ -87,12 +94,19 @@ def wait_for_server():
 
 
 def register(user):
-    """Register via the shared-secret admin API.
+    """Register `user`, with Synapse's shared-secret admin API or, on servers
+    without it, a registration token, or in MAS when the server's accounts
+    live there.
 
     Returns the new user's access token (registering also logs in), or None
     if the user already exists.
     """
-    nonce = call("GET", "/_synapse/admin/v1/register")["nonce"]
+    try:
+        nonce = call("GET", "/_synapse/admin/v1/register")["nonce"]
+    except MatrixError as e:
+        if e.status != 404:
+            raise
+        return register_with_token(user)
     mac = hmac.new(SHARED_SECRET.encode(), digestmod=hashlib.sha1)
     mac.update(b"\x00".join([nonce.encode(), user.encode(), PASSWORD.encode(), b"notadmin"]))
     try:
@@ -104,6 +118,75 @@ def register(user):
         if e.body.get("errcode") == "M_USER_IN_USE":
             return None
         raise
+
+
+def register_with_token(user):
+    """Register through `/register` with a registration token: the first
+    request starts a session, the second answers its token stage."""
+    body = {"username": user, "password": PASSWORD,
+            "initial_device_display_name": "aimtrix seed script"}
+    try:
+        call("POST", "/_matrix/client/v3/register", body)
+        sys.exit(f"{HS} registered {user} without a registration token")
+    except MatrixError as e:
+        if e.body.get("errcode") == "M_USER_IN_USE":
+            return None
+        # Synapse behind MAS: accounts are made in MAS instead.
+        if e.status == 403 and mas_issuer():
+            return register_with_mas(mas_issuer(), user)
+        if e.status != 401:
+            raise
+        session = e.body["session"]
+    body["auth"] = {"type": "m.login.registration_token",
+                    "token": REGISTRATION_TOKEN, "session": session}
+    try:
+        return call("POST", "/_matrix/client/v3/register", body)["access_token"]
+    except MatrixError as e:
+        # continuwuity checks the name only after the token.
+        if e.body.get("errcode") == "M_USER_IN_USE":
+            return None
+        raise
+
+
+def mas_issuer():
+    """MAS's address if the server delegates accounts to it, else None."""
+    try:
+        return call("GET", "/_matrix/client/v1/auth_metadata")["issuer"]
+    except MatrixError:
+        return None
+
+
+def register_with_mas(issuer, user):
+    """Create the account in MAS with its admin API, then sign on through
+    the homeserver (MAS answers that too)."""
+    basic = base64.b64encode(":".join(MAS_ADMIN_CLIENT).encode()).decode()
+    req = urllib.request.Request(
+        issuer + "oauth2/token", method="POST",
+        data=b"grant_type=client_credentials&scope=urn:mas:admin",
+        headers={"Authorization": f"Basic {basic}",
+                 "Content-Type": "application/x-www-form-urlencoded"})
+    with urllib.request.urlopen(req) as resp:
+        admin = json.loads(resp.read())["access_token"]
+
+    def api(method, path, body):
+        req = urllib.request.Request(
+            issuer + "api/admin/v1/" + path, method=method, data=json.dumps(body).encode(),
+            headers={"Authorization": f"Bearer {admin}", "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return json.loads(resp.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            raise MatrixError(e.code, e.read().decode()) from None
+
+    try:
+        created = api("POST", "users", {"username": user})
+    except MatrixError as e:
+        if e.status == 409:
+            return None
+        raise
+    api("POST", f"users/{created['data']['id']}/set-password",
+        {"password": PASSWORD, "skip_password_check": True})
+    return login(user)
 
 
 def login(user):
