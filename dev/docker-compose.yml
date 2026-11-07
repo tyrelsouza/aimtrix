@@ -18,6 +18,7 @@
 #   docker compose -f dev/docker-compose.yml --profile mas up -d
 #   AIMTRIX_HS=http://localhost:8013 python3 dev/seed.py
 # Homeserver: http://localhost:8013   MAS (accounts, browser): http://localhost:8014
+# Dex, standing in for Google sign-in: http://localhost:5556
 
 services:
   synapse: &synapse
@@ -76,6 +77,9 @@ services:
       # Otherwise new users' display names get a flag emoji appended.
       CONTINUWUITY_NEW_USER_DISPLAYNAME_SUFFIX: '""'
       CONTINUWUITY_ALLOW_FEDERATION: "false"
+      # Its public address, for the OAuth endpoints it advertises (else
+      # https://localhost/, where nothing listens).
+      CONTINUWUITY_WELL_KNOWN__CLIENT: http://localhost:8011
       CONTINUWUITY_TRUSTED_SERVERS: "[]"
     volumes:
       - continuwuity-data:/var/lib/continuwuity
@@ -120,6 +124,17 @@ services:
     depends_on:
       mas-db:
         condition: service_healthy
+
+  # Stands in for Google/GitHub/Apple sign-in, for accounts without a
+  # password (dev/mas/dex.yaml).
+  dex:
+    image: ghcr.io/dexidp/dex:latest
+    profiles: [mas]
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    volumes:
+      - ./mas/dex.yaml:/etc/dex/config.yaml:ro
+    ports:
+      - "127.0.0.1:5556:5556"
 
   mas-proxy:
     image: nginx:alpine

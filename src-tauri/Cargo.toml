@@ -19,7 +19,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-matrix-sdk = "0.19"
+# local-server: catches the browser's redirect after "Sign On with Browser".
+matrix-sdk = { version = "0.19", features = ["local-server"] }
 keyring = "4"
 rand = "0.10.3"
 matrix-sdk-ui = "0.19"
@@ -29,6 +30,7 @@ futures-util = "0.3"
 tokio = { version = "1.54.1", features = ["macros", "sync", "time"] }
 ammonia = "4.2.4"
 tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
 matrix-sdk-crypto = { version = "0.19", default-features = false }
 mime = "0.3"
 mime_guess = "2"

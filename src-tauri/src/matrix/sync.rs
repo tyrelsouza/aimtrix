@@ -107,10 +107,18 @@ pub async fn start(
                             service.start().await;
                         }
                     },
-                    Ok(SessionChange::UnknownToken(_)) = session_changes.recv() => {
-                        on_status(Status::SignedOut);
-                        break;
-                    }
+                    Ok(change) = session_changes.recv() => match change {
+                        SessionChange::UnknownToken(_) => {
+                            on_status(Status::SignedOut);
+                            break;
+                        }
+                        // OAuth access tokens expire; keep the new ones.
+                        SessionChange::TokensRefreshed => {
+                            if let Err(e) = super::save_refreshed_tokens(&client).await {
+                                eprintln!("{e}");
+                            }
+                        }
+                    },
                     else => break,
                 }
             }

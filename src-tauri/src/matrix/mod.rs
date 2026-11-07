@@ -22,15 +22,25 @@ use std::{
 use matrix_sdk::reqwest::Url;
 use matrix_sdk::{
     Client,
-    ruma::api::{
-        FeatureFlag,
-        error::{ErrorBody, ErrorKind},
+    authentication::oauth::{
+        ClientId, OAuthSession,
+        error::{OAuthAuthorizationCodeError, OAuthError, OAuthTokenRevocationError},
+        registration::{ApplicationType, ClientMetadata, Localized, OAuthGrantType},
     },
+    ruma::{
+        api::{
+            FeatureFlag,
+            client::session::get_login_types::v3::LoginType,
+            error::{ErrorBody, ErrorKind},
+        },
+        serde::Raw,
+    },
+    utils::local_server::{LocalServerBuilder, LocalServerResponse},
 };
 use rand::distr::{Alphanumeric, SampleString};
 use tauri::async_runtime::{Mutex, spawn_blocking};
 
-use keyring::SavedSession;
+use keyring::{SavedAuth, SavedSession};
 
 /// App-wide session state, shared by every window.
 #[derive(Default)]
@@ -84,15 +94,76 @@ pub async fn sign_on(
     username: &str,
     password: &str,
 ) -> Result<Client, String> {
-    // A store belongs to one device, so every sign-on starts a fresh one.
+    new_sign_on(data_dir, async |store, passphrase| {
+        login(store, passphrase, homeserver, username, password).await
+    })
+    .await
+}
+
+/// What a server lets you sign on with, for the Sign On window.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct Methods {
+    /// Screen name and password.
+    pub password: bool,
+    /// In the browser, with OAuth: for accounts without a password (made
+    /// with Google, GitHub, Apple…), and servers that only allow that.
+    pub browser: bool,
+}
+
+/// Ask `homeserver` how it lets people sign on. Not signed on yet, so this
+/// uses a throwaway client with nothing stored.
+pub async fn sign_on_methods(homeserver: &str) -> Result<Methods, String> {
+    let client = Client::builder()
+        .server_name_or_homeserver_url(homeserver)
+        .build()
+        .await
+        .map_err(|e| format!("Couldn't reach homeserver: {}", with_causes(&e)))?;
+    // Only servers that advertise OAuth (`/auth_metadata`) offer the browser.
+    let browser = client.oauth().server_metadata().await.is_ok();
+    let password = match client.matrix_auth().get_login_types().await {
+        Ok(types) => types
+            .flows
+            .iter()
+            .any(|flow| matches!(flow, LoginType::Password(_))),
+        // Can't tell: offer the password unless the browser works.
+        Err(_) => !browser,
+    };
+    Ok(Methods { password, browser })
+}
+
+/// How long to wait for sign-on in the browser before giving up.
+const BROWSER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Sign on in the browser with OAuth, and save the session so the next
+/// launch can resume. `open` shows the server's sign-on page; this then
+/// waits for the browser to come back, until `cancelled` resolves or
+/// [`BROWSER_TIMEOUT`].
+pub async fn sign_on_with_browser(
+    data_dir: &Path,
+    homeserver: &str,
+    open: impl FnOnce(&Url) -> Result<(), String>,
+    cancelled: impl Future<Output = ()>,
+) -> Result<Client, String> {
+    new_sign_on(data_dir, async |store, passphrase| {
+        browser_login(store, passphrase, homeserver, open, cancelled).await
+    })
+    .await
+}
+
+/// Sign on into a fresh store with `log_in`, then save the session. A store
+/// belongs to one device, so every sign-on starts a new one; a sign-on that
+/// fails leaves nothing behind.
+async fn new_sign_on(
+    data_dir: &Path,
+    log_in: impl AsyncFnOnce(&Path, &str) -> Result<Client, String>,
+) -> Result<Client, String> {
     let store = store_dir(data_dir);
     remove_store(&store)?;
     let passphrase = Alphanumeric.sample_string(&mut rand::rng(), 32);
 
-    let client = match login(&store, &passphrase, homeserver, username, password).await {
+    let client = match log_in(&store, &passphrase).await {
         Ok(client) => client,
         Err(e) => {
-            // Leave nothing behind from a sign-on that didn't happen.
             let _ = remove_store(&store);
             return Err(e);
         }
@@ -100,15 +171,51 @@ pub async fn sign_on(
     let saved = SavedSession {
         homeserver: client.homeserver().to_string(),
         store_passphrase: passphrase,
-        session: client
-            .matrix_auth()
-            .session()
-            .expect("logged in client has a session"),
+        auth: saved_auth(&client).expect("signed-on client has a session"),
     };
     spawn_blocking(move || keyring::save(&saved))
         .await
         .map_err(|e| e.to_string())??;
     Ok(client)
+}
+
+/// The session as it's saved, with its current tokens.
+fn saved_auth(client: &Client) -> Option<SavedAuth> {
+    let oauth = client.oauth();
+    match (oauth.client_id(), oauth.user_session()) {
+        (Some(client_id), Some(user)) => Some(SavedAuth::OAuth {
+            client_id: client_id.as_str().to_owned(),
+            oauth: user,
+        }),
+        _ => client
+            .matrix_auth()
+            .session()
+            .map(|session| SavedAuth::Password { session }),
+    }
+}
+
+/// Save the session's tokens again after the SDK refreshed them (OAuth
+/// access tokens expire). Only updates the saved session if it's still this
+/// one: after signing off, there's nothing to update.
+pub async fn save_refreshed_tokens(client: &Client) -> Result<(), String> {
+    let Some(auth) = saved_auth(client) else {
+        return Ok(());
+    };
+    let device = client.device_id().map(ToOwned::to_owned);
+    spawn_blocking(move || {
+        keyring::update(|saved| {
+            let same_device = match &saved.auth {
+                SavedAuth::Password { session } => Some(&session.meta.device_id),
+                SavedAuth::OAuth { oauth, .. } => Some(&oauth.meta.device_id),
+            } == device.as_ref();
+            if same_device {
+                saved.auth = auth;
+            }
+            same_device
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Resume the saved session, if there is one. Works offline: the token is
@@ -128,11 +235,68 @@ pub async fn resume(data_dir: &Path) -> Result<Option<Client>, String> {
 pub async fn sign_off(data_dir: &Path, client: Client) -> Result<(), String> {
     // Otherwise buddies see us online until the server times us out.
     presence::sign_off(&client).await;
-    if let Err(e) = client.logout().await {
+    if let Err(e) = log_out(&client).await {
         eprintln!("Server-side logout failed, forgetting the session anyway: {e}");
     }
     drop(client);
     forget(data_dir).await
+}
+
+/// End the session on the server: delete the device, or with OAuth, revoke
+/// the token.
+async fn log_out(client: &Client) -> Result<(), String> {
+    match client.logout().await {
+        // The SDK revokes only over https. A server on plain http (a dev or
+        // home server) would keep the token alive, so revoke it directly.
+        Err(matrix_sdk::Error::OAuth(e))
+            if matches!(*e, OAuthError::Logout(OAuthTokenRevocationError::Url(_))) =>
+        {
+            revoke_over_http(client).await
+        }
+        result => result.map_err(|e| e.to_string()),
+    }
+}
+
+/// Revoke the OAuth access token (RFC 7009), which ends the session.
+async fn revoke_over_http(client: &Client) -> Result<(), String> {
+    let oauth = client.oauth();
+    let metadata = oauth.server_metadata().await.map_err(|e| e.to_string())?;
+    let (Some(client_id), Some(tokens)) = (oauth.client_id(), client.session_tokens()) else {
+        return Err("Not signed on".to_owned());
+    };
+    let form = format!(
+        "token={}&token_type_hint=access_token&client_id={}",
+        form_encode(&tokens.access_token),
+        form_encode(client_id.as_str())
+    );
+    let response = matrix_sdk::reqwest::Client::new()
+        .post(metadata.revocation_endpoint)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(form)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the server refused to revoke the token ({})",
+            response.status()
+        ))
+    }
+}
+
+/// Percent-encode for an `application/x-www-form-urlencoded` body.
+fn form_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
+            b => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// Forget the saved session and its store without contacting the server.
@@ -153,10 +317,8 @@ async fn login(
     username: &str,
     password: &str,
 ) -> Result<Client, String> {
-    let client = Client::builder()
+    let client = builder(store, passphrase)
         .server_name_or_homeserver_url(homeserver)
-        .sqlite_store(store, Some(passphrase))
-        .with_encryption_settings(crypto::settings())
         .build()
         .await
         .map_err(|e| format!("Couldn't reach homeserver: {}", with_causes(&e)))?;
@@ -183,6 +345,102 @@ async fn login(
         })?;
 
     Ok(client)
+}
+
+/// AIMtrix's address, shown on the server's consent page.
+const CLIENT_URI: &str = "https://github.com/tyrelsouza/AIMtrix";
+
+/// What the browser shows after it hands sign-on back to AIMtrix.
+const SIGNED_ON_PAGE: &str = "<!doctype html><meta charset=utf-8><title>AIMtrix</title>\
+    <body style=\"font-family:sans-serif;text-align:center;margin-top:20vh\">\
+    <h1>You're signed on</h1><p>You can close this tab and go back to AIMtrix.</p>";
+
+/// Sign on in the browser (OAuth authorization code with PKCE) into a new
+/// store at `store`. AIMtrix registers itself with the server each time
+/// (dynamic client registration), since its redirect address, a loopback
+/// port, changes every time.
+async fn browser_login(
+    store: &Path,
+    passphrase: &str,
+    homeserver: &str,
+    open: impl FnOnce(&Url) -> Result<(), String>,
+    cancelled: impl Future<Output = ()>,
+) -> Result<Client, String> {
+    let client = builder(store, passphrase)
+        .server_name_or_homeserver_url(homeserver)
+        .build()
+        .await
+        .map_err(|e| format!("Couldn't reach homeserver: {}", with_causes(&e)))?;
+    check_sliding_sync(&client).await?;
+
+    let oauth = client.oauth();
+    let (redirect_uri, redirected) = LocalServerBuilder::new()
+        .response(LocalServerResponse::Html(SIGNED_ON_PAGE.to_owned()))
+        .spawn()
+        .await
+        .map_err(|e| format!("Couldn't get ready to sign on: {e}"))?;
+    let authorization = oauth
+        .login(
+            redirect_uri.clone(),
+            None,
+            Some(client_metadata(redirect_uri).into()),
+            None,
+        )
+        .build()
+        .await
+        .map_err(|e| {
+            eprintln!(
+                "Starting browser sign-on with {} failed: {e}",
+                client.homeserver()
+            );
+            format!("The server wouldn't start signing on: {e}")
+        })?;
+    open(&authorization.url)?;
+
+    let query = tokio::select! {
+        query = redirected.into_future() => query,
+        () = cancelled => None,
+        () = tokio::time::sleep(BROWSER_TIMEOUT) => {
+            oauth.abort_login(&authorization.state).await;
+            return Err("Signing on in the browser took too long. Try again.".to_owned());
+        }
+    };
+    let Some(query) = query else {
+        oauth.abort_login(&authorization.state).await;
+        return Err("Signing on in the browser was cancelled.".to_owned());
+    };
+    oauth.finish_login(query.into()).await.map_err(|e| {
+        eprintln!("Browser sign-on with {} failed: {e}", client.homeserver());
+        match e {
+            matrix_sdk::Error::OAuth(e)
+                if matches!(
+                    *e,
+                    OAuthError::AuthorizationCode(OAuthAuthorizationCodeError::Cancelled)
+                ) =>
+            {
+                "You didn't allow AIMtrix to sign on.".to_owned()
+            }
+            e => format!("Sign on failed: {e}"),
+        }
+    })?;
+    Ok(client)
+}
+
+/// How AIMtrix describes itself when registering with a server.
+fn client_metadata(mut redirect_uri: Url) -> Raw<ClientMetadata> {
+    // A native app registers its loopback address without the port, which
+    // changes every time; servers accept any port (RFC 8252). continuwuity
+    // refuses one with a port.
+    let _ = redirect_uri.set_port(None);
+    let mut metadata = ClientMetadata::new(
+        ApplicationType::Native,
+        vec![OAuthGrantType::AuthorizationCode {
+            redirect_uris: vec![redirect_uri],
+        }],
+        Localized::new(Url::parse(CLIENT_URI).expect("valid URL"), []),
+    );
+    metadata.client_name = Some(Localized::new("AIMtrix".to_owned(), []));
+    Raw::new(&metadata).expect("client metadata serializes")
 }
 
 /// AIMtrix syncs only with simplified sliding sync (MSC4186), and the SDK
@@ -251,18 +509,35 @@ fn forbidden(message: &str) -> String {
 
 /// Reopen the store at `store` and restore the saved session into it.
 async fn restore(store: &Path, saved: &SavedSession) -> Result<Client, String> {
-    let client = Client::builder()
+    let client = builder(store, &saved.store_passphrase)
         .homeserver_url(&saved.homeserver)
-        .sqlite_store(store, Some(&saved.store_passphrase))
-        .with_encryption_settings(crypto::settings())
         .build()
         .await
         .map_err(|e| format!("Couldn't open the session store: {}", with_causes(&e)))?;
-    client
-        .restore_session(saved.session.clone())
-        .await
-        .map_err(|e| format!("Couldn't restore the session: {e}"))?;
+    let restored = match &saved.auth {
+        SavedAuth::Password { session } => client.restore_session(session.clone()).await,
+        SavedAuth::OAuth { client_id, oauth } => {
+            client
+                .restore_session(OAuthSession {
+                    client_id: ClientId::new(client_id.clone()),
+                    user: oauth.clone(),
+                })
+                .await
+        }
+    };
+    restored.map_err(|e| format!("Couldn't restore the session: {e}"))?;
     Ok(client)
+}
+
+/// A client with its encrypted store at `store`; the caller picks the
+/// homeserver.
+fn builder(store: &Path, passphrase: &str) -> matrix_sdk::ClientBuilder {
+    Client::builder()
+        .sqlite_store(store, Some(passphrase))
+        .with_encryption_settings(crypto::settings())
+        // OAuth access tokens expire; the SDK refreshes them as needed, and
+        // `sync` saves the new ones.
+        .handle_refresh_tokens()
 }
 
 fn remove_store(store: &Path) -> Result<(), String> {
@@ -438,7 +713,7 @@ mod tests {
         let mut saved = SavedSession {
             homeserver: client.homeserver().to_string(),
             store_passphrase: PASS.to_owned(),
-            session: client.matrix_auth().session().unwrap(),
+            auth: saved_auth(&client).unwrap(),
         };
         drop(client);
 
@@ -510,7 +785,7 @@ mod tests {
         let saved = SavedSession {
             homeserver: client.homeserver().to_string(),
             store_passphrase: PASS.to_owned(),
-            session: client.matrix_auth().session().unwrap(),
+            auth: saved_auth(&client).unwrap(),
         };
         restore(other_dir.path(), &saved)
             .await
@@ -2385,7 +2660,7 @@ mod tests {
             let started = post(register.clone(), body.clone()).await.unwrap();
             // Synapse behind MAS: accounts are made in MAS instead.
             if started.status() == 403
-                && let Some(mas) = MasAdmin::connect().await
+                && let Some(mas) = MasAdmin::connect(hs()).await
             {
                 mas.create_user(&user).await;
                 return user;
@@ -2427,11 +2702,11 @@ mod tests {
     }
 
     impl MasAdmin {
-        /// `None` unless the dev server delegates its accounts to our MAS.
-        async fn connect() -> Option<Self> {
+        /// `None` unless `homeserver` delegates its accounts to our MAS.
+        async fn connect(homeserver: &str) -> Option<Self> {
             let http = matrix_sdk::reqwest::Client::new();
             let metadata = json(
-                http.get(format!("{}/_matrix/client/v1/auth_metadata", hs()))
+                http.get(format!("{homeserver}/_matrix/client/v1/auth_metadata"))
                     .send()
                     .await
                     .ok()?,
@@ -2940,7 +3215,7 @@ mod tests {
         use matrix_sdk::ruma::api::client::uiaa::{AuthData, MatrixUserIdentifier, Password};
         let user = client.user_id().unwrap().localpart().to_owned();
         // Behind MAS, accounts can only be deactivated there.
-        if let Some(mas) = MasAdmin::connect().await {
+        if let Some(mas) = MasAdmin::connect(hs()).await {
             mas.deactivate(&user).await;
             return;
         }
@@ -3145,5 +3420,305 @@ mod tests {
         lines
             .iter()
             .any(|line| matches!(line, timeline::Line::Message { body, .. } if body == text))
+    }
+
+    /// The dev Synapse behind MAS (the `mas` compose profile), which offers
+    /// sign-on in the browser.
+    const MAS_HS: &str = "http://localhost:8013";
+
+    /// How [`sign_on_in_browser`] signs on.
+    enum Browser<'a> {
+        /// With the MAS password of this user.
+        Password(&'a str),
+        /// Through the dev provider (`dev/mas/dex.yaml`), as dana, whose
+        /// account has no password: like a matrix.org account made with
+        /// Google.
+        DevProvider,
+    }
+
+    /// Do what a person does in the browser on the dev MAS: sign on, then
+    /// allow AIMtrix (or not), which sends the browser back to AIMtrix.
+    async fn sign_on_in_browser(start: Url, how: Browser<'_>, allow: bool) {
+        let http = matrix_sdk::reqwest::Client::builder()
+            .redirect(matrix_sdk::reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        // Cookies by host. Kept by hand: continuwuity's are `Secure`, which
+        // browsers allow on http://localhost but cookie jars don't.
+        let mut cookies: HashMap<String, HashMap<String, String>> = HashMap::new();
+        let mut send = async |request: matrix_sdk::reqwest::RequestBuilder, url: &Url| {
+            let host = url.host_str().unwrap_or_default().to_owned();
+            let jar = cookies.entry(host).or_default();
+            let cookie = jar
+                .iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            // What browsers send; continuwuity refuses forms without it.
+            let response = request
+                .header("cookie", cookie)
+                .header("sec-fetch-site", "same-origin")
+                .header("sec-fetch-mode", "navigate")
+                .header("sec-fetch-dest", "document")
+                .send()
+                .await
+                .unwrap();
+            for set in response.headers().get_all("set-cookie") {
+                let pair = set.to_str().unwrap().split(';').next().unwrap();
+                if let Some((name, value)) = pair.split_once('=') {
+                    jar.insert(name.trim().to_owned(), value.trim().to_owned());
+                }
+            }
+            response
+        };
+        let unescape = |s: &str| {
+            s.replace("&#x2f;", "/")
+                .replace("&amp;", "&")
+                .replace("&quot;", "\"")
+        };
+        // The value of `attribute` in the HTML tag `tag`, if any.
+        let attr = |tag: &str, attribute: &str| {
+            let start = tag.find(&format!(" {attribute}=\""))? + attribute.len() + 3;
+            Some(unescape(&tag[start..start + tag[start..].find('"')?]))
+        };
+        let mut url = start;
+        let mut response = send(http.get(url.clone()), &url).await;
+        for _ in 0..20 {
+            if let Some(location) = response.headers().get("location") {
+                url = url.join(&unescape(location.to_str().unwrap())).unwrap();
+                response = send(http.get(url.clone()), &url).await;
+                // Back to AIMtrix's loopback address: done.
+                if url.host_str() == Some("127.0.0.1") {
+                    return;
+                }
+                continue;
+            }
+            let page = response.text().await.unwrap();
+            // MAS's sign-on page offers the dev provider as a link.
+            if matches!(how, Browser::DevProvider)
+                && page.contains("name=\"password\"")
+                && let Some(link) = page
+                    .find("/upstream/authorize/")
+                    .or_else(|| page.find("&#x2f;upstream&#x2f;authorize&#x2f;"))
+            {
+                let tag = &page[page[..link].rfind('<').unwrap()..];
+                let href = attr(&tag[..tag.find('>').unwrap()], "href").unwrap();
+                url = url.join(&href).unwrap();
+                response = send(http.get(url.clone()), &url).await;
+                continue;
+            }
+            // The consent page's Cancel goes straight back, refusing.
+            if !allow && page.contains("error=access_denied") {
+                let at = page.find("error=access_denied").unwrap();
+                let tag = &page[page[..at].rfind('<').unwrap()..];
+                let href = attr(&tag[..tag.find('>').unwrap()], "href").unwrap();
+                let href = Url::parse(&href).unwrap();
+                send(http.get(href.clone()), &href).await;
+                return;
+            }
+            // Otherwise fill in and send the page's first form: sign-on
+            // (MAS or the provider), creating the account, or consent.
+            let form = &page[page.find("<form").expect("a form")..];
+            let form = &form[..form.find("</form>").unwrap()];
+            let target = match attr(&form[..form.find('>').unwrap()], "action") {
+                Some(action) => url.join(&action).unwrap(),
+                None => url.clone(),
+            };
+            let mut fields = Vec::new();
+            for input in form.split("<input").skip(1) {
+                let tag = &input[..input.find('>').unwrap()];
+                let Some(name) = attr(tag, "name") else {
+                    continue;
+                };
+                let value = match (name.as_str(), &how) {
+                    // MAS, and continuwuity's own sign-on page.
+                    ("username" | "identifier", Browser::Password(user)) => (*user).to_owned(),
+                    ("login", Browser::DevProvider) => "dana@example.com".to_owned(),
+                    ("password", _) => "aimtrix-test".to_owned(),
+                    _ => attr(tag, "value").unwrap_or_default(),
+                };
+                fields.push(format!("{}={}", form_encode(&name), form_encode(&value)));
+            }
+            let post = http
+                .post(target.clone())
+                .header("content-type", "application/x-www-form-urlencoded")
+                .header("origin", target.origin().ascii_serialization())
+                .body(fields.join("&"));
+            response = send(post, &target).await;
+        }
+        panic!("the browser never got back to AIMtrix (last at {url})");
+    }
+
+    /// Sign on to the dev MAS in the browser, played by
+    /// [`sign_on_in_browser`].
+    async fn browser_sign_on(
+        dir: &std::path::Path,
+        homeserver: &str,
+        how: Browser<'static>,
+        allow: bool,
+    ) -> Result<Client, String> {
+        let (opened, url) = tokio::sync::oneshot::channel();
+        let browser =
+            tokio::spawn(async move { sign_on_in_browser(url.await.unwrap(), how, allow).await });
+        let client = browser_login(
+            dir,
+            PASS,
+            homeserver,
+            |url| {
+                opened.send(url.clone()).unwrap();
+                Ok(())
+            },
+            std::future::pending(),
+        )
+        .await;
+        browser.await.unwrap();
+        client
+    }
+
+    /// Whether the server still accepts `access_token`.
+    async fn token_works(access_token: &str) -> bool {
+        matrix_sdk::reqwest::Client::new()
+            .get(format!("{MAS_HS}/_matrix/client/v3/account/whoami"))
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn browser_sign_on_survives_restart_and_refresh_and_signs_off() {
+        // dana, from the dev provider, has no password: only the browser
+        // signs her on.
+        let dir = tempfile::tempdir().unwrap();
+        let client = browser_sign_on(dir.path(), MAS_HS, Browser::DevProvider, true)
+            .await
+            .unwrap();
+        let user = "dana";
+        let other = tempfile::tempdir().unwrap();
+        assert_eq!(
+            login(other.path(), PASS, MAS_HS, user, "aimtrix-test")
+                .await
+                .unwrap_err(),
+            "Incorrect screen name or password."
+        );
+        assert_eq!(client.user_id().unwrap().localpart(), user);
+        let device = client.device_id().unwrap().to_owned();
+        assert!(matches!(saved_auth(&client), Some(SavedAuth::OAuth { .. })));
+
+        // Tokens expire and get refreshed, and the session to save has the
+        // new ones. (MAS keeps the old access token working for a while, and
+        // Synapse caches token checks, so there's no point checking it's
+        // dead.)
+        let mut changes = client.subscribe_to_session_changes();
+        let old = client.session_tokens().unwrap();
+        assert!(old.refresh_token.is_some());
+        client.oauth().refresh_access_token().await.unwrap();
+        assert!(matches!(
+            changes.recv().await,
+            Ok(matrix_sdk::SessionChange::TokensRefreshed)
+        ));
+        let new = client.session_tokens().unwrap();
+        assert_ne!(new.access_token, old.access_token);
+        assert!(token_works(&new.access_token).await);
+        let saved = SavedSession {
+            homeserver: client.homeserver().to_string(),
+            store_passphrase: PASS.to_owned(),
+            auth: saved_auth(&client).unwrap(),
+        };
+        let SavedAuth::OAuth { oauth, .. } = &saved.auth else {
+            panic!("not an OAuth session");
+        };
+        assert_eq!(oauth.tokens.access_token, new.access_token);
+
+        // A restart resumes the same device from what was saved.
+        drop(client);
+        let client = restore(dir.path(), &saved).await.unwrap();
+        assert_eq!(client.whoami().await.unwrap().user_id.localpart(), user);
+        assert_eq!(client.device_id().unwrap(), device);
+
+        // Signing off revokes the token on the server, even on plain http.
+        log_out(&client).await.unwrap();
+        assert!(!token_works(&new.access_token).await);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn browser_sign_on_works_with_a_password_too_and_can_be_refused() {
+        let mas = MasAdmin::connect(MAS_HS).await.expect("the dev MAS is up");
+        let user: &'static str = format!("browser-{}", rand::random::<u32>()).leak();
+        mas.create_user(user).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let err = browser_sign_on(dir.path(), MAS_HS, Browser::Password(user), false)
+            .await
+            .unwrap_err();
+        assert_eq!(err, "You didn't allow AIMtrix to sign on.");
+
+        let client = browser_sign_on(dir.path(), MAS_HS, Browser::Password(user), true)
+            .await
+            .unwrap();
+        assert_eq!(client.user_id().unwrap().localpart(), user);
+        log_out(&client).await.unwrap();
+        mas.deactivate(user).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn browser_sign_on_works_on_continuwuity() {
+        // continuwuity has its own OAuth (no MAS), with its own sign-on page.
+        const CONTINUWUITY_HS: &str = "http://localhost:8011";
+        let dir = tempfile::tempdir().unwrap();
+        let client = browser_sign_on(
+            dir.path(),
+            CONTINUWUITY_HS,
+            Browser::Password("alice"),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(client.user_id().unwrap(), "@alice:localhost");
+        let token = client.session_tokens().unwrap().access_token;
+        log_out(&client).await.unwrap();
+        let still_works = matrix_sdk::reqwest::Client::new()
+            .get(format!(
+                "{CONTINUWUITY_HS}/_matrix/client/v3/account/whoami"
+            ))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success();
+        assert!(!still_works, "signing off didn't revoke the token");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn browser_sign_on_can_be_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = browser_login(dir.path(), PASS, MAS_HS, |_| Ok(()), async {})
+            .await
+            .unwrap_err();
+        assert_eq!(err, "Signing on in the browser was cancelled.");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the dev homeserver"]
+    async fn sign_on_methods_offer_the_browser_only_with_oauth() {
+        let both = Methods {
+            password: true,
+            browser: true,
+        };
+        assert_eq!(sign_on_methods(MAS_HS).await.unwrap(), both);
+        assert_eq!(
+            sign_on_methods("http://localhost:8008").await.unwrap(),
+            Methods {
+                password: true,
+                browser: false,
+            }
+        );
     }
 }

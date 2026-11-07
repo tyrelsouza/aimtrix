@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use matrix_sdk::Client;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::{
     matrix::{
@@ -47,6 +48,70 @@ pub async fn login(
     windows::open_buddy_list(&app).map_err(|e| e.to_string())?;
     window.close().map_err(|e| e.to_string())?;
     Ok(user_id)
+}
+
+/// How `homeserver` lets people sign on: password, browser, or both.
+#[tauri::command]
+pub async fn sign_on_methods(homeserver: String) -> Result<matrix::Methods, String> {
+    matrix::sign_on_methods(&homeserver).await
+}
+
+/// A sign-on in the browser that's waiting for the browser to come back;
+/// sending cancels it.
+#[derive(Default)]
+pub struct BrowserSignOn(std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>);
+
+/// Sign on in the browser (OAuth), then carry on like [`login`]. Waits until
+/// the browser comes back, [`cancel_browser_login`] or a timeout.
+#[tauri::command]
+pub async fn login_with_browser(
+    app: AppHandle,
+    window: WebviewWindow,
+    homeserver: String,
+    pending: State<'_, BrowserSignOn>,
+) -> Result<String, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let (cancel, cancelled) = tokio::sync::oneshot::channel();
+    // Starting again cancels a sign-on still waiting (its sender drops).
+    *pending.0.lock().unwrap() = Some(cancel);
+    let result = matrix::sign_on_with_browser(
+        &data_dir,
+        &homeserver,
+        |url| {
+            app.opener()
+                .open_url(url.as_str(), None::<&str>)
+                .map_err(|e| format!("Couldn't open your browser: {e}"))
+        },
+        async {
+            let _ = cancelled.await;
+        },
+    )
+    .await;
+    {
+        // Ours is done (its receiver dropped); leave a newer one waiting.
+        let mut waiting = pending.0.lock().unwrap();
+        if waiting.as_ref().is_some_and(|cancel| cancel.is_closed()) {
+            waiting.take();
+        }
+    }
+    let client = result?;
+    let user_id = client
+        .user_id()
+        .expect("signed-on client has a user ID")
+        .to_string();
+    session::begin(&app, client).await?;
+
+    windows::open_buddy_list(&app).map_err(|e| e.to_string())?;
+    window.close().map_err(|e| e.to_string())?;
+    Ok(user_id)
+}
+
+/// Stop waiting for the browser.
+#[tauri::command]
+pub fn cancel_browser_login(pending: State<'_, BrowserSignOn>) {
+    if let Some(cancel) = pending.0.lock().unwrap().take() {
+        let _ = cancel.send(());
+    }
 }
 
 /// Sign off, open Sign On, and close the window that called this.

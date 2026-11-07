@@ -35,15 +35,19 @@ AIMTRIX_HS=http://localhost:8013 cargo test --manifest-path src-tauri/Cargo.toml
 
 An nginx container (`mas/nginx.conf`) is the homeserver on 8013: it sends `/login`, `/logout` and `/refresh` to MAS and everything else to Synapse. MAS itself (its account pages, and OAuth for 7.4) is on 8014. Accounts are made with MAS's admin API, using the admin client in `mas/config.yaml`. As on matrix.org, resetting your encryption identity needs approval in MAS's web page instead of a password; the tests approve it the way MAS does (`approve_identity_reset`). `clean-devices.py` doesn't work here: MAS doesn't allow deleting devices with a password.
 
+MAS also offers "Dev Provider (like Google)", a [Dex](https://dexidp.io) container (`mas/dex.yaml`, on 5556) standing in for Google, GitHub or Apple. Choosing it on MAS's sign-in page (not the username and password fields there) and signing in to Dex as `dana@example.com` / `aimtrix-test` makes (or reuses) the account `@dana:localhost`, which has no password: it can only sign on with **Use Browser…**, like a matrix.org account made with Google. Access tokens here last 60 seconds instead of 5 minutes, so token refresh happens while you test.
+
+Browser sign-on also works on continuwuity, which has its own OAuth (no MAS); `CONTINUWUITY_WELL_KNOWN__CLIENT` makes it advertise `localhost:8011` for it.
+
 | What | Where |
 |---|---|
 | Homeserver | `http://localhost:8008` (server name `localhost`, presence on) |
 | Homeserver without presence | `http://localhost:8009` (same users and rooms once seeded; `synapse/no-presence.yaml` overrides `homeserver.yaml`) |
 | continuwuity | `http://localhost:8011` (server name `localhost`, presence on; same users and rooms once seeded) |
-| Synapse behind MAS | `http://localhost:8013` (homeserver, server name `localhost`); `http://localhost:8014` (MAS: account pages, OAuth) |
+| Synapse behind MAS | `http://localhost:8013` (homeserver, server name `localhost`); `http://localhost:8014` (MAS: account pages, OAuth); `http://localhost:5556` (Dex, the "Dev Provider") |
 | Fake old homeserver | `http://localhost:8010`, from `python3 dev/old-server.py`: no simplified sliding sync, so AIMtrix should refuse to sign on |
 | Element Web | `http://localhost:8080`, the "other person" to chat with AIMtrix |
-| Users | `alice`, `bob`, `carol`, password `aimtrix-test` |
+| Users | `alice`, `bob`, `carol`, password `aimtrix-test`; on the MAS server also `dana`, browser only (see above) |
 
 ## Seeded rooms (from Alice's point of view)
 

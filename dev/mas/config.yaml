@@ -126,3 +126,36 @@ rate_limiting:
     per_ip: {burst: 10000, per_second: 1000}
     per_account: {burst: 10000, per_second: 1000}
   registration: {burst: 10000, per_second: 1000}
+
+# "Sign in with Dev Provider", standing in for Google, GitHub or Apple on
+# matrix.org: accounts made this way have no password (dev/mas/dex.yaml).
+# The browser goes to localhost:5556 and MAS to dex:5556, so discovery is
+# off and the endpoints are spelled out.
+upstream_oauth2:
+  providers:
+    - id: 01JA1MTR1XDEXVPSTREAM00000
+      human_name: Dev Provider (like Google)
+      issuer: http://localhost:5556/dex
+      discovery_mode: disabled
+      authorization_endpoint: http://localhost:5556/dex/auth
+      token_endpoint: http://dex:5556/dex/token
+      jwks_uri: http://dex:5556/dex/keys
+      client_id: aimtrix-dev-mas
+      client_secret: aimtrix-dev-dex-secret
+      token_endpoint_auth_method: client_secret_basic
+      scope: openid email profile
+      claims_imports:
+        localpart:
+          action: require
+          template: "{{ user.name }}"
+        displayname:
+          action: suggest
+          template: "{{ user.name | capitalize }}"
+        email:
+          action: suggest
+          template: "{{ user.email }}"
+
+# Access tokens last 5 minutes by default; expire them sooner so token
+# refresh happens while you test (OAuth sign-on, PLAN.md 7.4).
+experimental:
+  access_token_ttl: 60

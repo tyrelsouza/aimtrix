@@ -42,7 +42,8 @@
         ],
         "depends": [
           "libc6 (>= 2.35)",
-          "ca-certificates"
+          "ca-certificates",
+          "xdg-utils"
         ],
         "desktopTemplate": "aimtrix.desktop"
       }
