@@ -1,13 +1,17 @@
-# Checks every push: the frontend type-check, the Rust unit tests and a
+# Checks pull requests and main: the frontend type-check, the Rust unit tests and a
 # release build (without installers; those are PLAN.md 8.5), plus the
 # server tests against every dev homeserver in Docker, as
-# `mise run test-server` does locally. All on Linux; macOS and Windows build
-# only on pushes to main, since the repo is private and their runner
+# `mise run test-server` does locally. All on Linux; macOS and Windows also
+# build on pushes to main, since the repo is private and their runner
 # minutes cost 10x and 2x.
 name: CI
 
+# Pull requests, and pushes to main (which a pull request's checks don't
+# cover once merged). A push to a branch with a pull request would
+# otherwise run everything twice.
 on:
   push:
+    branches: [main]
   pull_request:
 
 # A newer push to the same branch replaces a run still going.
