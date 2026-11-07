@@ -25,11 +25,22 @@ AIMTRIX_HS=http://localhost:8011 cargo test --manifest-path src-tauri/Cargo.toml
 
 It has no shared-secret admin API, so the seed script and the tests register users with the registration token `aimtrix-dev-token` instead. Its first account is the server admin; the container creates `admin` (password `aimtrix-test`) at startup so that isn't alice. Known differences are under "Known issues" in `PLAN.md`.
 
+Synapse behind Matrix Authentication Service (MAS), set up like matrix.org: Synapse delegates accounts and sign-on to MAS, and password sign-on still works through MAS's compatibility layer:
+
+```sh
+docker compose -f dev/docker-compose.yml --profile mas up -d
+AIMTRIX_HS=http://localhost:8013 python3 dev/seed.py
+AIMTRIX_HS=http://localhost:8013 cargo test --manifest-path src-tauri/Cargo.toml -- --include-ignored --test-threads=8
+```
+
+An nginx container (`mas/nginx.conf`) is the homeserver on 8013: it sends `/login`, `/logout` and `/refresh` to MAS and everything else to Synapse. MAS itself (its account pages, and OAuth for 7.4) is on 8014. Accounts are made with MAS's admin API, using the admin client in `mas/config.yaml`. As on matrix.org, resetting your encryption identity needs approval in MAS's web page instead of a password; the tests approve it the way MAS does (`approve_identity_reset`). `clean-devices.py` doesn't work here: MAS doesn't allow deleting devices with a password.
+
 | What | Where |
 |---|---|
 | Homeserver | `http://localhost:8008` (server name `localhost`, presence on) |
 | Homeserver without presence | `http://localhost:8009` (same users and rooms once seeded; `synapse/no-presence.yaml` overrides `homeserver.yaml`) |
 | continuwuity | `http://localhost:8011` (server name `localhost`, presence on; same users and rooms once seeded) |
+| Synapse behind MAS | `http://localhost:8013` (homeserver, server name `localhost`); `http://localhost:8014` (MAS: account pages, OAuth) |
 | Fake old homeserver | `http://localhost:8010`, from `python3 dev/old-server.py`: no simplified sliding sync, so AIMtrix should refuse to sign on |
 | Element Web | `http://localhost:8080`, the "other person" to chat with AIMtrix |
 | Users | `alice`, `bob`, `carol`, password `aimtrix-test` |

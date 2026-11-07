@@ -2104,23 +2104,27 @@ mod tests {
         if !recovered {
             let recovery = client.encryption().recovery();
             if let Some(reset) = recovery.reset_identity().await.unwrap() {
-                let matrix_sdk::encryption::CrossSigningResetAuthType::Uiaa(uiaa) =
-                    reset.auth_type()
-                else {
-                    panic!("the dev homeserver asks for a password");
-                };
-                use matrix_sdk::ruma::api::client::uiaa::{
-                    AuthData, MatrixUserIdentifier, Password,
-                };
-                let mut password = Password::new(
-                    MatrixUserIdentifier::new("bob".to_owned()).into(),
-                    "aimtrix-test".to_owned(),
-                );
-                password.session = uiaa.session.clone();
-                reset
-                    .reset(Some(AuthData::Password(password)))
-                    .await
-                    .unwrap();
+                match reset.auth_type() {
+                    matrix_sdk::encryption::CrossSigningResetAuthType::Uiaa(uiaa) => {
+                        use matrix_sdk::ruma::api::client::uiaa::{
+                            AuthData, MatrixUserIdentifier, Password,
+                        };
+                        let mut password = Password::new(
+                            MatrixUserIdentifier::new("bob".to_owned()).into(),
+                            "aimtrix-test".to_owned(),
+                        );
+                        password.session = uiaa.session.clone();
+                        reset
+                            .reset(Some(AuthData::Password(password)))
+                            .await
+                            .unwrap();
+                    }
+                    // Behind MAS, approved in the browser instead.
+                    matrix_sdk::encryption::CrossSigningResetAuthType::OAuth(_) => {
+                        approve_identity_reset("bob").await;
+                        reset.reset(None).await.unwrap();
+                    }
+                }
             }
             assert!(
                 has_cross_signing(&client).await,
@@ -2347,7 +2351,8 @@ mod tests {
 
     /// Register a new user on the dev server, password `aimtrix-test`, with
     /// Synapse's shared-secret admin API or, on servers without it, the
-    /// registration token (see `dev/seed.py`). Deactivate it when done.
+    /// registration token, or in MAS when the server's accounts live there
+    /// (see `dev/seed.py`). Deactivate it with [`deactivate`] when done.
     async fn register_throwaway_user(prefix: &str) -> String {
         use hmac::{Hmac, Mac};
         let user = format!("{prefix}-{}", rand::random::<u32>());
@@ -2378,6 +2383,13 @@ mod tests {
                 "username": user, "password": "aimtrix-test", "inhibit_login": true,
             });
             let started = post(register.clone(), body.clone()).await.unwrap();
+            // Synapse behind MAS: accounts are made in MAS instead.
+            if started.status() == 403
+                && let Some(mas) = MasAdmin::connect().await
+            {
+                mas.create_user(&user).await;
+                return user;
+            }
             let started: serde_json::Value =
                 serde_json::from_str(&started.text().await.unwrap()).unwrap();
             body["auth"] = serde_json::json!({
@@ -2389,6 +2401,107 @@ mod tests {
         };
         assert!(response.status().is_success(), "couldn't register {user}");
         user
+    }
+
+    /// Approve an identity reset as if `user` did it in MAS's web page: tell
+    /// Synapse, the way MAS does, with their shared secret
+    /// (`dev/synapse/mas.yaml`).
+    async fn approve_identity_reset(user: &str) {
+        let response = matrix_sdk::reqwest::Client::new()
+            .post(format!("{}/_synapse/mas/allow_cross_signing_reset", hs()))
+            .bearer_auth("aimtrix-dev-mas-synapse-secret")
+            .header("content-type", "application/json")
+            .body(serde_json::json!({ "localpart": user }).to_string())
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success(), "couldn't approve the reset");
+    }
+
+    /// The dev MAS's admin API (`dev/mas/config.yaml`), for servers whose
+    /// accounts live in MAS.
+    struct MasAdmin {
+        http: matrix_sdk::reqwest::Client,
+        api: String,
+        token: String,
+    }
+
+    impl MasAdmin {
+        /// `None` unless the dev server delegates its accounts to our MAS.
+        async fn connect() -> Option<Self> {
+            let http = matrix_sdk::reqwest::Client::new();
+            let metadata = json(
+                http.get(format!("{}/_matrix/client/v1/auth_metadata", hs()))
+                    .send()
+                    .await
+                    .ok()?,
+            )
+            .await?;
+            let issuer = metadata["issuer"].as_str()?.to_owned();
+            let response = http
+                .post(format!("{issuer}oauth2/token"))
+                .basic_auth(
+                    "01JA1MTR1XDEVADM1NC11ENT00",
+                    Some("aimtrix-dev-admin-secret"),
+                )
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body("grant_type=client_credentials&scope=urn:mas:admin")
+                .send()
+                .await
+                .ok()?;
+            let token = json(response.error_for_status().ok()?).await?;
+            Some(Self {
+                api: format!("{issuer}api/admin/v1/"),
+                token: token["access_token"].as_str()?.to_owned(),
+                http,
+            })
+        }
+
+        async fn call(&self, path: &str, body: serde_json::Value) -> serde_json::Value {
+            let response = self
+                .http
+                .post(format!("{}{path}", self.api))
+                .bearer_auth(&self.token)
+                .header("content-type", "application/json")
+                .body(body.to_string())
+                .send()
+                .await
+                .unwrap();
+            assert!(response.status().is_success(), "MAS refused {path}");
+            json(response).await.unwrap_or_default()
+        }
+
+        async fn create_user(&self, user: &str) {
+            let created = self
+                .call("users", serde_json::json!({ "username": user }))
+                .await;
+            let id = created["data"]["id"].as_str().unwrap();
+            self.call(
+                &format!("users/{id}/set-password"),
+                serde_json::json!({ "password": "aimtrix-test", "skip_password_check": true }),
+            )
+            .await;
+        }
+
+        async fn deactivate(&self, user: &str) {
+            let found = json(
+                self.http
+                    .get(format!("{}users/by-username/{user}", self.api))
+                    .bearer_auth(&self.token)
+                    .send()
+                    .await
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+            let id = found["data"]["id"].as_str().unwrap();
+            self.call(&format!("users/{id}/deactivate"), serde_json::json!({}))
+                .await;
+        }
+    }
+
+    async fn json(response: matrix_sdk::reqwest::Response) -> Option<serde_json::Value> {
+        serde_json::from_str(&response.text().await.ok()?).ok()
     }
 
     #[tokio::test]
@@ -2440,17 +2553,8 @@ mod tests {
         second_sync.stop().await;
         second.logout().await.unwrap();
         first_sync.stop().await;
-        use matrix_sdk::ruma::api::client::uiaa::{AuthData, MatrixUserIdentifier, Password};
-        let password = Password::new(
-            MatrixUserIdentifier::new(user.clone()).into(),
-            "aimtrix-test".to_owned(),
-        );
         // Signs out every device too.
-        first
-            .account()
-            .deactivate(None, Some(AuthData::Password(password)), true)
-            .await
-            .unwrap();
+        deactivate(&first).await;
     }
 
     /// The second dev homeserver, with presence off (the `no-presence`
@@ -2603,8 +2707,6 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs the dev homeserver"]
     async fn add_buddy_starts_a_dm_once() {
-        use matrix_sdk::ruma::api::client::uiaa::{AuthData, MatrixUserIdentifier, Password};
-
         let user = register_throwaway_user("addbuddy").await;
         let dir = tempfile::tempdir().unwrap();
         let alice = login(dir.path(), PASS, hs(), "alice", "aimtrix-test")
@@ -2701,15 +2803,7 @@ mod tests {
         let buddy = login(buddy_dir.path(), PASS, hs(), &user, "aimtrix-test")
             .await
             .unwrap();
-        let password = Password::new(
-            MatrixUserIdentifier::new(user.clone()).into(),
-            "aimtrix-test".to_owned(),
-        );
-        buddy
-            .account()
-            .deactivate(None, Some(AuthData::Password(password)), true)
-            .await
-            .unwrap();
+        deactivate(&buddy).await;
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
         }
@@ -2845,6 +2939,11 @@ mod tests {
     async fn deactivate(client: &Client) {
         use matrix_sdk::ruma::api::client::uiaa::{AuthData, MatrixUserIdentifier, Password};
         let user = client.user_id().unwrap().localpart().to_owned();
+        // Behind MAS, accounts can only be deactivated there.
+        if let Some(mas) = MasAdmin::connect().await {
+            mas.deactivate(&user).await;
+            return;
+        }
         let password = Password::new(
             MatrixUserIdentifier::new(user).into(),
             "aimtrix-test".to_owned(),

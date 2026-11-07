@@ -11,6 +11,7 @@
           ["http://localhost:8008", "Dev server (localhost:8008)"],
           ["http://localhost:8009", "Dev, no presence (localhost:8009)"],
           ["http://localhost:8011", "Dev, continuwuity (localhost:8011)"],
+          ["http://localhost:8013", "Dev, behind MAS (localhost:8013)"],
         ] as [string, string][])
       : []),
   ];

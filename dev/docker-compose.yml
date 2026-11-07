@@ -13,6 +13,11 @@
 #   docker compose -f dev/docker-compose.yml --profile continuwuity up -d
 #   AIMTRIX_HS=http://localhost:8011 python3 dev/seed.py
 # continuwuity: http://localhost:8011
+#
+# Synapse behind Matrix Authentication Service, like matrix.org:
+#   docker compose -f dev/docker-compose.yml --profile mas up -d
+#   AIMTRIX_HS=http://localhost:8013 python3 dev/seed.py
+# Homeserver: http://localhost:8013   MAS (accounts, browser): http://localhost:8014
 
 services:
   synapse: &synapse
@@ -77,6 +82,54 @@ services:
     ports:
       - "127.0.0.1:8011:8008"
 
+  synapse-mas:
+    <<: *synapse
+    profiles: [mas]
+    environment:
+      SYNAPSE_CONFIG_PATH: /config
+    volumes:
+      - ./synapse/homeserver.yaml:/config/homeserver.yaml:ro
+      - ./synapse/mas.yaml:/config/mas.yaml:ro
+      - synapse-mas-data:/data
+    # Reached through mas-proxy, so login goes to MAS.
+    ports: []
+
+  mas-db:
+    image: postgres:16-alpine
+    profiles: [mas]
+    environment:
+      POSTGRES_USER: mas
+      POSTGRES_PASSWORD: mas
+      POSTGRES_DB: mas
+    volumes:
+      - mas-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "mas"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mas:
+    image: ghcr.io/element-hq/matrix-authentication-service:latest
+    profiles: [mas]
+    command: ["server", "--config", "/config/config.yaml"]
+    volumes:
+      - ./mas/config.yaml:/config/config.yaml:ro
+    ports:
+      - "127.0.0.1:8014:8080"
+    depends_on:
+      mas-db:
+        condition: service_healthy
+
+  mas-proxy:
+    image: nginx:alpine
+    profiles: [mas]
+    volumes:
+      - ./mas/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:8013:8013"
+    depends_on: [synapse-mas, mas]
+
   element:
     image: vectorim/element-web:latest
     volumes:
@@ -91,3 +144,5 @@ volumes:
   synapse-data:
   synapse-no-presence-data:
   continuwuity-data:
+  synapse-mas-data:
+  mas-db-data:

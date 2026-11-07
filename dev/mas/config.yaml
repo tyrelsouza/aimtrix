@@ -1,0 +1,128 @@
+# Matrix Authentication Service for the dev Synapse on localhost:8013, set
+# up like matrix.org: Synapse delegates auth to MAS, and password sign-on
+# still works through MAS's compatibility layer. NOT for production: every
+# secret and key below is public.
+#
+# Users are made through the admin API (dev/seed.py and the tests), with
+# the `aimtrix-dev-admin` client below.
+
+http:
+  listeners:
+    - name: web
+      resources:
+        - name: discovery
+        - name: human
+        - name: oauth
+        - name: compat
+        - name: graphql
+        - name: assets
+        - name: adminapi
+      binds:
+        - address: "[::]:8080"
+    - name: internal
+      resources:
+        - name: health
+      binds:
+        - address: "[::]:8081"
+  trusted_proxies: [172.16.0.0/12, 192.168.0.0/16, 10.0.0.0/8, 127.0.0.1/8]
+  # The browser reaches MAS directly here, like account.matrix.org.
+  public_base: http://localhost:8014/
+  issuer: http://localhost:8014/
+
+database:
+  uri: postgresql://mas:mas@mas-db/mas
+
+email:
+  from: '"AIMtrix dev" <root@localhost>'
+  reply_to: '"AIMtrix dev" <root@localhost>'
+  transport: blackhole
+
+secrets:
+  encryption: 77c629a662f7f56c2997ccffa7e80b42332d0921d812ac296fc275a6d3811c9e
+  keys:
+  - key: |
+      -----BEGIN RSA PRIVATE KEY-----
+      MIIEowIBAAKCAQEAzwT9G4fSREG/FagdREBa3uHn4Du34/mxZmL+GP/s0pT76KtK
+      DwfoE+5sqlwz4H+brCrvyg3aWvIoLfrB0mQoFscKvGWvf94wCFhIEHqDKZnjWomV
+      obal397SuaK/4mIYXGCmP8o+Hs7E9DCRDRPlYBzIiEoIPVxbOBUlRS4g0FHR71aa
+      5oi2yTDr3zVHwjB6YT36Ph3jJPCca2j4vJKGC8WMmB/sfK9lVgFQXz63MhCeC1U7
+      Ujs0INGsEwuY4Cyr5/Jh36Q28buT6xi8LBcVvGOFR35jgJpn9dy41ppLOsdzQ1j8
+      paFcXc+VvH34EfbRXkrB053W81M3BksXcvEUAQIDAQABAoIBACTuA+TkXssUW20W
+      l1n0jQFTlVS38n71rQLRx/hXtzx9nU6NN+HkjC76CmJ9njd/LBsTccE+pWQx7J7/
+      K5JHkas2iKDBFwSdcz4Z2YkvAbTrIdal0o6NkZuVGUxKTyaoTyYzi5S3lEtUoWfa
+      PhXyJan2mINPiZbAofkoNITZzLq8e4FvRI41/KIKE6c4Bw3aUqwh1brR10viNAOQ
+      xCghDcuTe+G+PDDh7LXg9EI6lFw34kWicaR88IfPVSDWri9HQM7SjwRmV6gvOg2f
+      2w+2bmuac4ggq/PZx5zMksAvJtYxYGaFpz+RDPfw/cnKdSwqRc3OdJOUxpO3m0t7
+      u10F3xECgYEA13+fAzJsif00ckSY9RqRvaYX+PWF2C+IgZ23onQBZasm6tU95Y4s
+      DSoIybJ6vdj1S4tB5VaJmaf/UgFdZzPmQK5QAFEL+ysjKx7nvmlXNaEZ3o702rR1
+      /FrYOPsrBki2+DxT5gozXq+89+aOLZ1OczciPBsBmiPNg8HWk+gtYI0CgYEA9e1p
+      drGq533dCZJL9EfPxoJWB1AXl2Qsb+apC0mzcObHEOJvJ+gBz0DCMjaiPUyp7Yr8
+      joXwmeh6etLRXEONms5aGht+xA1kOSF2BJ+/PMvvY1o4u2PwffFVDBH19V0X2NC2
+      s4+1RsXgNxO0CMLuLTugYRB/dg+cfrZR5dJtxkUCgYEAvb7QWzdF3IZHbKm76Gz5
+      kHwztXEx5bWMw1wEuhTcuhFmVfVm5740SW8Oh9IQQyNKcLbwUafNxq7mn+U1wc4v
+      2hnhtTWnkANelvRCZyVHtZ/hMFa9f+jPzmCK7Dkzm/fgq1grI20t6BxjDgBChiVx
+      Uv9jtHqvAXKu3WmKr3cKpW0CgYBMRunKJcsTZ+dx+41RZCCeunhCZmYaz7g0sP9H
+      gAGHCB1AMGs3nm9JQBW7i1SA3NFr2wsAjayVoBS1GcRT8KPwGwa5SEPmPR0T1zwK
+      rR2clshWMXqdLJ9AAOVXDA8Unl4yInI4eV9JZ0Bm9NaHTSagovjYgkx2atsoNhZq
+      yPzBXQKBgEGGr+TV/5+J+m4CpviiEXfBxGnqNSwUixRocDqE45LTK4B7ubH+i+i1
+      XZlclJOoZYJs9gQXyHq2XIF3Ib+aWhwMUgGvEBzSh79m7rcH6JA8N5yCmAot61Hk
+      3hPCH5gG0FfBTv0SVqWYDzW9n66B38NFhpySFb8NLP23d0evEJxC
+      -----END RSA PRIVATE KEY-----
+  - key: |
+      -----BEGIN EC PRIVATE KEY-----
+      MHcCAQEEIDu+wl8H63OufBlsJSXk0JUcU1pcIpIpPjJLin3E76LxoAoGCCqGSM49
+      AwEHoUQDQgAEhZ6Xa/Y9HaQrkSMcgGohU6KgJbSkfAqO+UYqC/cvNzhcYTvXvxNz
+      gOaamn9xkcnjtCLre5ChrUExnOxoscnIXg==
+      -----END EC PRIVATE KEY-----
+  - key: |
+      -----BEGIN EC PRIVATE KEY-----
+      MIGkAgEBBDAxFoe6H1Hgp4vSR1bQ9v15iJWTA+2ix+FDlY4hTbjKgKsNmcdlpiQy
+      rWomIULb/CygBwYFK4EEACKhZANiAASnKoDumBS0Kkpcqz/QypFnSvvGMTG41EGN
+      dlfRy2SYYletNG7KrFGs1Guq7tOX0oNYox0S7IugJa1LAcyrjIcN9/lYYgDtC0la
+      oCfEuxyGDwCRbPnYgeWy0NAFXAuP7wM=
+      -----END EC PRIVATE KEY-----
+  - key: |
+      -----BEGIN EC PRIVATE KEY-----
+      MHQCAQEEIDp9MjBIjaKYBz/ng16lCCjAPPMpTIXPK94eRvAHZqyAoAcGBSuBBAAK
+      oUQDQgAEwTehYQQ8aT2AJULZ53ffxNwJpI8snmuKbzT8+H+Xjna6eml9+FM8JgDu
+      Bh8W51lrX8YdLY1NW98GDiI62ebPlA==
+      -----END EC PRIVATE KEY-----
+passwords:
+  enabled: true
+  schemes:
+    - version: 1
+      algorithm: argon2id
+  minimum_complexity: 0
+
+account:
+  password_registration_enabled: true
+  # No email server in dev.
+  password_registration_email_required: false
+
+matrix:
+  kind: synapse
+  homeserver: localhost
+  secret: aimtrix-dev-mas-synapse-secret
+  endpoint: http://synapse-mas:8008/
+
+clients:
+  # For dev/seed.py and the tests: client credentials with admin access.
+  - client_id: 01JA1MTR1XDEVADM1NC11ENT00
+    client_auth_method: client_secret_basic
+    client_secret: aimtrix-dev-admin-secret
+
+policy:
+  data:
+    admin_clients: [01JA1MTR1XDEVADM1NC11ENT00]
+    # Tests sign on and off a lot.
+    client_registration:
+      allow_insecure_uris: true
+      allow_host_mismatch: true
+      allow_missing_contacts: true
+
+# The tests sign on many times a minute.
+rate_limiting:
+  login:
+    per_ip: {burst: 10000, per_second: 1000}
+    per_account: {burst: 10000, per_second: 1000}
+  registration: {burst: 10000, per_second: 1000}
