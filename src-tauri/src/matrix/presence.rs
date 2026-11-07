@@ -238,7 +238,7 @@ async fn run(
             }
             break;
         }
-        tokio::time::sleep(HEARTBEAT).await;
+        tokio::time::sleep(interval).await;
     }
     tokio::join!(
         heartbeat(&client, &own, &state, &heartbeat_sent),
@@ -298,17 +298,32 @@ async fn poll(
 /// offline anyway (no presence); `None` if we couldn't tell.
 async fn detect(client: &Client, own: &UserId) -> Option<bool> {
     if let Err(e) = set(client, own, None).await {
+        // continuwuity refuses outright when presence is off.
+        if status_of(&e) == Some(403) {
+            eprintln!("The server refused to set presence: {e}");
+            return Some(false);
+        }
         eprintln!("Couldn't set presence: {e}");
         return None;
     }
     match fetch(client, own).await {
         Ok(status) => Some(status.presence != Presence::Offline),
+        // continuwuity shows presence only to people sharing a room, us
+        // included, so a new account with no rooms can't read its own yet.
+        Err(e) if status_of(&e) == Some(404) => {
+            eprintln!("Couldn't read our own presence yet, trying again later: {e}");
+            None
+        }
         // Some servers refuse presence requests outright when it's off.
         Err(e) => {
             eprintln!("Couldn't read presence, treating it as off: {e}");
             Some(false)
         }
     }
+}
+
+fn status_of(error: &matrix_sdk::HttpError) -> Option<u16> {
+    error.as_client_api_error().map(|e| e.status_code.as_u16())
 }
 
 async fn fetch(client: &Client, user: &UserId) -> matrix_sdk::HttpResult<Status> {

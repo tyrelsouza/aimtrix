@@ -30,6 +30,8 @@ import zlib
 
 HS = os.environ.get("AIMTRIX_HS", "http://localhost:8008")
 SHARED_SECRET = os.environ.get("AIMTRIX_SHARED_SECRET", "aimtrix-dev-secret")
+# For servers without Synapse's admin API (continuwuity).
+REGISTRATION_TOKEN = os.environ.get("AIMTRIX_REGISTRATION_TOKEN", "aimtrix-dev-token")
 PASSWORD = os.environ.get("AIMTRIX_PASSWORD", "aimtrix-test")
 SERVER_NAME = "localhost"
 
@@ -79,7 +81,8 @@ def mxid(user):
 def wait_for_server():
     for _ in range(60):
         try:
-            urllib.request.urlopen(HS + "/health").read()
+            # Not /health: only Synapse has it.
+            urllib.request.urlopen(HS + "/_matrix/client/versions").read()
             return
         except OSError:
             time.sleep(1)
@@ -87,12 +90,18 @@ def wait_for_server():
 
 
 def register(user):
-    """Register via the shared-secret admin API.
+    """Register `user`, with Synapse's shared-secret admin API or, on servers
+    without it, a registration token.
 
     Returns the new user's access token (registering also logs in), or None
     if the user already exists.
     """
-    nonce = call("GET", "/_synapse/admin/v1/register")["nonce"]
+    try:
+        nonce = call("GET", "/_synapse/admin/v1/register")["nonce"]
+    except MatrixError as e:
+        if e.status != 404:
+            raise
+        return register_with_token(user)
     mac = hmac.new(SHARED_SECRET.encode(), digestmod=hashlib.sha1)
     mac.update(b"\x00".join([nonce.encode(), user.encode(), PASSWORD.encode(), b"notadmin"]))
     try:
@@ -101,6 +110,31 @@ def register(user):
             "admin": False, "mac": mac.hexdigest(),
         })["access_token"]
     except MatrixError as e:
+        if e.body.get("errcode") == "M_USER_IN_USE":
+            return None
+        raise
+
+
+def register_with_token(user):
+    """Register through `/register` with a registration token: the first
+    request starts a session, the second answers its token stage."""
+    body = {"username": user, "password": PASSWORD,
+            "initial_device_display_name": "aimtrix seed script"}
+    try:
+        call("POST", "/_matrix/client/v3/register", body)
+        sys.exit(f"{HS} registered {user} without a registration token")
+    except MatrixError as e:
+        if e.body.get("errcode") == "M_USER_IN_USE":
+            return None
+        if e.status != 401:
+            raise
+        session = e.body["session"]
+    body["auth"] = {"type": "m.login.registration_token",
+                    "token": REGISTRATION_TOKEN, "session": session}
+    try:
+        return call("POST", "/_matrix/client/v3/register", body)["access_token"]
+    except MatrixError as e:
+        # continuwuity checks the name only after the token.
         if e.body.get("errcode") == "M_USER_IN_USE":
             return None
         raise

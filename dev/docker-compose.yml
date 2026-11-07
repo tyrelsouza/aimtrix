@@ -8,6 +8,11 @@
 #   docker compose -f dev/docker-compose.yml --profile no-presence up -d
 #   AIMTRIX_HS=http://localhost:8009 python3 dev/seed.py
 # Synapse (no presence): http://localhost:8009
+#
+# continuwuity, a different server implementation (presence on):
+#   docker compose -f dev/docker-compose.yml --profile continuwuity up -d
+#   AIMTRIX_HS=http://localhost:8011 python3 dev/seed.py
+# continuwuity: http://localhost:8011
 
 services:
   synapse: &synapse
@@ -46,6 +51,32 @@ services:
     ports:
       - "127.0.0.1:8009:8008"
 
+  continuwuity:
+    image: forgejo.ellis.link/continuwuation/continuwuity:latest
+    profiles: [continuwuity]
+    environment:
+      CONTINUWUITY_SERVER_NAME: localhost
+      CONTINUWUITY_DATABASE_PATH: /var/lib/continuwuity
+      CONTINUWUITY_ADDRESS: '["0.0.0.0"]'
+      CONTINUWUITY_PORT: "8008"
+      # No shared-secret admin API like Synapse's; dev/seed.py and the
+      # tests register with this token instead.
+      CONTINUWUITY_ALLOW_REGISTRATION: "true"
+      CONTINUWUITY_REGISTRATION_TOKEN: aimtrix-dev-token
+      # The first account is the server admin and needs a one-time token
+      # from the log, so make it here (an error on later starts: it exists).
+      CONTINUWUITY_ADMIN_EXECUTE: '["users create-user admin aimtrix-test"]'
+      CONTINUWUITY_ADMIN_EXECUTE_ERRORS_IGNORE: "true"
+      CONTINUWUITY_ALLOW_LOCAL_PRESENCE: "true"
+      # Otherwise new users' display names get a flag emoji appended.
+      CONTINUWUITY_NEW_USER_DISPLAYNAME_SUFFIX: '""'
+      CONTINUWUITY_ALLOW_FEDERATION: "false"
+      CONTINUWUITY_TRUSTED_SERVERS: "[]"
+    volumes:
+      - continuwuity-data:/var/lib/continuwuity
+    ports:
+      - "127.0.0.1:8011:8008"
+
   element:
     image: vectorim/element-web:latest
     volumes:
@@ -59,3 +90,4 @@ services:
 volumes:
   synapse-data:
   synapse-no-presence-data:
+  continuwuity-data:

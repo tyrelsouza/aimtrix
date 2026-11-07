@@ -281,14 +281,22 @@ mod tests {
     use super::*;
     use base64::{Engine, engine::general_purpose::STANDARD};
 
-    const HS: &str = "http://localhost:8008";
+    /// The dev homeserver the tests run against: `AIMTRIX_HS`, like
+    /// `dev/seed.py`, or the dev Synapse. Point it at another seeded server
+    /// (e.g. continuwuity on `http://localhost:8011`) to test that one.
+    fn hs() -> &'static str {
+        static HS: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+            std::env::var("AIMTRIX_HS").unwrap_or_else(|_| "http://localhost:8008".to_owned())
+        });
+        &HS
+    }
     const PASS: &str = "store-passphrase";
 
     #[tokio::test]
     #[ignore = "needs the dev homeserver"]
     async fn login_returns_user_id() {
         let dir = tempfile::tempdir().unwrap();
-        let client = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+        let client = login(dir.path(), PASS, hs(), "alice", "aimtrix-test")
             .await
             .unwrap();
         assert_eq!(client.user_id().unwrap(), "@alice:localhost");
@@ -300,7 +308,7 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn login_rejects_bad_password() {
         let dir = tempfile::tempdir().unwrap();
-        let err = login(dir.path(), PASS, HS, "alice", "wrong")
+        let err = login(dir.path(), PASS, hs(), "alice", "wrong")
             .await
             .unwrap_err();
         assert_eq!(err, "Incorrect screen name or password.");
@@ -424,7 +432,7 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn restore_resumes_session_from_store() {
         let dir = tempfile::tempdir().unwrap();
-        let client = login(dir.path(), PASS, HS, "bob", "aimtrix-test")
+        let client = login(dir.path(), PASS, hs(), "bob", "aimtrix-test")
             .await
             .unwrap();
         let mut saved = SavedSession {
@@ -469,7 +477,7 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn sync_goes_online() {
         let dir = tempfile::tempdir().unwrap();
-        let client = login(dir.path(), PASS, HS, "carol", "aimtrix-test")
+        let client = login(dir.path(), PASS, hs(), "carol", "aimtrix-test")
             .await
             .unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -488,7 +496,7 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn sync_reports_revoked_token_as_signed_out() {
         let dir = tempfile::tempdir().unwrap();
-        let client = login(dir.path(), PASS, HS, "carol", "aimtrix-test")
+        let client = login(dir.path(), PASS, hs(), "carol", "aimtrix-test")
             .await
             .unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -595,7 +603,7 @@ mod tests {
         use rooms::Section;
 
         let dir = tempfile::tempdir().unwrap();
-        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+        let alice = login(dir.path(), PASS, hs(), "alice", "aimtrix-test")
             .await
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
@@ -615,7 +623,7 @@ mod tests {
 
         // Bob invites Alice to a new room; it must show up without restarting.
         let bob_dir = tempfile::tempdir().unwrap();
-        let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
+        let bob = login(bob_dir.path(), PASS, hs(), "bob", "aimtrix-test")
             .await
             .unwrap();
         let mut request = Request::new();
@@ -662,7 +670,7 @@ mod tests {
             ruma::{RoomId, events::room::message::RoomMessageEventContent},
         };
         let dir = tempfile::tempdir().unwrap();
-        let client = login(dir.path(), PASS, HS, user, "aimtrix-test")
+        let client = login(dir.path(), PASS, hs(), user, "aimtrix-test")
             .await
             .unwrap();
         client.sync_once(SyncSettings::default()).await.unwrap();
@@ -681,7 +689,7 @@ mod tests {
         use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
 
         let dir = tempfile::tempdir().unwrap();
-        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+        let alice = login(dir.path(), PASS, hs(), "alice", "aimtrix-test")
             .await
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
@@ -744,7 +752,7 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn buddy_icons_load_for_rooms_with_avatars() {
         let dir = tempfile::tempdir().unwrap();
-        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+        let alice = login(dir.path(), PASS, hs(), "alice", "aimtrix-test")
             .await
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
@@ -791,7 +799,7 @@ mod tests {
         use rooms::Section;
 
         let dir = tempfile::tempdir().unwrap();
-        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+        let alice = login(dir.path(), PASS, hs(), "alice", "aimtrix-test")
             .await
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
@@ -801,7 +809,7 @@ mod tests {
         });
 
         let bob_dir = tempfile::tempdir().unwrap();
-        let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
+        let bob = login(bob_dir.path(), PASS, hs(), "bob", "aimtrix-test")
             .await
             .unwrap();
         let invite = |name: Option<&str>, direct: bool, carol_too: bool| {
@@ -856,7 +864,7 @@ mod tests {
         // Carol declines, so the invite doesn't pile up on her account. (Bob
         // can't withdraw it: the preset gives invitees his power level.)
         let carol_dir = tempfile::tempdir().unwrap();
-        let carol = login(carol_dir.path(), PASS, HS, "carol", "aimtrix-test")
+        let carol = login(carol_dir.path(), PASS, hs(), "carol", "aimtrix-test")
             .await
             .unwrap();
         carol
@@ -926,7 +934,7 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn timeline_shows_history_and_new_messages() {
         let dir = tempfile::tempdir().unwrap();
-        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+        let alice = login(dir.path(), PASS, hs(), "alice", "aimtrix-test")
             .await
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
@@ -1058,7 +1066,7 @@ mod tests {
         tauri::async_runtime::JoinHandle<()>,
         String,
     ) {
-        let client = login(dir, PASS, HS, user, "aimtrix-test").await.unwrap();
+        let client = login(dir, PASS, hs(), user, "aimtrix-test").await.unwrap();
         let syncing = sync::start(&client, |_| {}).await.unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let watcher = watch_buddies(&syncing, move |b| {
@@ -1382,7 +1390,7 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn reading_clears_the_bold() {
         let dir = tempfile::tempdir().unwrap();
-        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+        let alice = login(dir.path(), PASS, hs(), "alice", "aimtrix-test")
             .await
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
@@ -1439,7 +1447,7 @@ mod tests {
     #[ignore = "needs the dev homeserver"]
     async fn icon_pane_gets_bigger_icons() {
         let dir = tempfile::tempdir().unwrap();
-        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+        let alice = login(dir.path(), PASS, hs(), "alice", "aimtrix-test")
             .await
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
@@ -1510,7 +1518,7 @@ mod tests {
 
         // Bob sends from another client.
         let bob_dir = tempfile::tempdir().unwrap();
-        let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
+        let bob = login(bob_dir.path(), PASS, hs(), "bob", "aimtrix-test")
             .await
             .unwrap();
         bob.sync_once(matrix_sdk::config::SyncSettings::default())
@@ -1628,7 +1636,7 @@ mod tests {
         // Bob replies to the first backlog message, far older than the
         // first page a window loads.
         let bob_dir = tempfile::tempdir().unwrap();
-        let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
+        let bob = login(bob_dir.path(), PASS, hs(), "bob", "aimtrix-test")
             .await
             .unwrap();
         bob.sync_once(matrix_sdk::config::SyncSettings::default())
@@ -1694,7 +1702,7 @@ mod tests {
         let image_name = format!("pic-{tag}.png");
         {
             let bob_dir = tempfile::tempdir().unwrap();
-            let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
+            let bob = login(bob_dir.path(), PASS, hs(), "bob", "aimtrix-test")
                 .await
                 .unwrap();
             bob.sync_once(matrix_sdk::config::SyncSettings::default())
@@ -1775,7 +1783,7 @@ mod tests {
         use timeline::{Line, MemberChange};
 
         let dir = tempfile::tempdir().unwrap();
-        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+        let alice = login(dir.path(), PASS, hs(), "alice", "aimtrix-test")
             .await
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
@@ -1831,46 +1839,57 @@ mod tests {
         };
 
         let bob_dir = tempfile::tempdir().unwrap();
-        let bob = login(bob_dir.path(), PASS, HS, "bob", "aimtrix-test")
+        let bob = login(bob_dir.path(), PASS, hs(), "bob", "aimtrix-test")
             .await
             .unwrap();
-        bob.join_room_by_id(&room_id).await.unwrap();
-        let joined = wait_for_members(&mut member_changes, 2).await;
-        assert_eq!(names(&joined), ["Alice Anderson", "Bob Brown"]);
-        assert!(!joined[1].own);
-        wait_for_lines(&mut lines, &mut diffs, "Bob entering", |l| {
-            has(l, "Bob Brown", MemberChange::Joined)
-        })
-        .await;
-        assert!(has(&lines, "Bob Brown", MemberChange::Invited));
-
-        room.set_room_topic("  test topic  ").await.unwrap();
-        let topic = tokio::time::timeout(std::time::Duration::from_secs(30), topic_changes.recv())
-            .await
-            .expect("the topic never changed");
-        assert_eq!(topic, Some(Some("test topic".to_owned())));
-        wait_for_lines(&mut lines, &mut diffs, "the topic line", |l| {
-            l.iter().any(|l| {
-                matches!(l, Line::Topic { name, topic: Some(t), .. }
-                    if name == "Alice Anderson" && t == "test topic")
+        let checks = std::panic::AssertUnwindSafe(async {
+            bob.join_room_by_id(&room_id).await.unwrap();
+            let joined = wait_for_members(&mut member_changes, 2).await;
+            assert_eq!(names(&joined), ["Alice Anderson", "Bob Brown"]);
+            assert!(!joined[1].own);
+            wait_for_lines(&mut lines, &mut diffs, "Bob entering", |l| {
+                has(l, "Bob Brown", MemberChange::Joined)
             })
-        })
-        .await;
+            .await;
+            assert!(has(&lines, "Bob Brown", MemberChange::Invited));
 
-        bob.get_room(&room_id).unwrap().leave().await.unwrap();
-        wait_for_members(&mut member_changes, 1).await;
-        wait_for_lines(&mut lines, &mut diffs, "Bob leaving", |l| {
-            has(l, "Bob Brown", MemberChange::Left)
-        })
-        .await;
+            room.set_room_topic("  test topic  ").await.unwrap();
+            let topic =
+                tokio::time::timeout(std::time::Duration::from_secs(30), topic_changes.recv())
+                    .await
+                    .expect("the topic never changed");
+            assert_eq!(topic, Some(Some("test topic".to_owned())));
+            wait_for_lines(&mut lines, &mut diffs, "the topic line", |l| {
+                l.iter().any(|l| {
+                    matches!(l, Line::Topic { name, topic: Some(t), .. }
+                        if name == "Alice Anderson" && t == "test topic")
+                })
+            })
+            .await;
 
-        // Clean up: Alice leaves too.
+            bob.get_room(&room_id).unwrap().leave().await.unwrap();
+            wait_for_members(&mut member_changes, 1).await;
+            wait_for_lines(&mut lines, &mut diffs, "Bob leaving", |l| {
+                has(l, "Bob Brown", MemberChange::Left)
+            })
+            .await;
+        });
+        let result = futures_util::FutureExt::catch_unwind(checks).await;
+
+        // Clean up even if a check failed, so test rooms don't pile up.
+        if let Some(bob_room) = bob.get_room(&room_id) {
+            let _ = bob_room.leave().await;
+        }
         bob.logout().await.unwrap();
         drop(timeline);
         drop(watching);
-        room.leave().await.unwrap();
+        let _ = room.leave().await;
+        let _ = room.forget().await;
         syncing.stop().await;
         alice.logout().await.unwrap();
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
     }
 
     /// Wait until `sender` knows `receiver`'s device, so a message it
@@ -2073,7 +2092,7 @@ mod tests {
     /// and uploading them, and throws the new private keys away.
     async fn ensure_bob_recovery() {
         let dir = tempfile::tempdir().unwrap();
-        let client = login(dir.path(), PASS, HS, "bob", "aimtrix-test")
+        let client = login(dir.path(), PASS, hs(), "bob", "aimtrix-test")
             .await
             .unwrap();
         client
@@ -2326,30 +2345,48 @@ mod tests {
         }
     }
 
-    /// Register a new user with the dev server's shared secret (see
-    /// `dev/seed.py`), password `aimtrix-test`. Deactivate it when done.
+    /// Register a new user on the dev server, password `aimtrix-test`, with
+    /// Synapse's shared-secret admin API or, on servers without it, the
+    /// registration token (see `dev/seed.py`). Deactivate it when done.
     async fn register_throwaway_user(prefix: &str) -> String {
         use hmac::{Hmac, Mac};
-        const ADMIN: &str = "http://localhost:8008/_synapse/admin/v1/register";
         let user = format!("{prefix}-{}", rand::random::<u32>());
         let http = matrix_sdk::reqwest::Client::new();
-        let get: serde_json::Value =
-            serde_json::from_str(&http.get(ADMIN).send().await.unwrap().text().await.unwrap())
-                .unwrap();
-        let nonce = get["nonce"].as_str().unwrap();
-        let mut mac = Hmac::<sha1::Sha1>::new_from_slice(b"aimtrix-dev-secret").unwrap();
-        mac.update(format!("{nonce}\0{user}\0aimtrix-test\0notadmin").as_bytes());
-        let body = serde_json::json!({
-            "nonce": nonce, "username": user, "password": "aimtrix-test", "admin": false,
-            "mac": hex::encode(mac.finalize().into_bytes()),
-        });
-        let response = http
-            .post(ADMIN)
-            .header("content-type", "application/json")
-            .body(body.to_string())
-            .send()
-            .await
-            .unwrap();
+        let post = |url: String, body: serde_json::Value| {
+            http.post(url)
+                .header("content-type", "application/json")
+                .body(body.to_string())
+                .send()
+        };
+        let admin = format!("{}/_synapse/admin/v1/register", hs());
+        let get = http.get(&admin).send().await.unwrap();
+        let response = if get.status().is_success() {
+            let get: serde_json::Value = serde_json::from_str(&get.text().await.unwrap()).unwrap();
+            let nonce = get["nonce"].as_str().unwrap();
+            let mut mac = Hmac::<sha1::Sha1>::new_from_slice(b"aimtrix-dev-secret").unwrap();
+            mac.update(format!("{nonce}\0{user}\0aimtrix-test\0notadmin").as_bytes());
+            let body = serde_json::json!({
+                "nonce": nonce, "username": user, "password": "aimtrix-test", "admin": false,
+                "mac": hex::encode(mac.finalize().into_bytes()),
+            });
+            post(admin, body).await.unwrap()
+        } else {
+            // The first request starts a session; the second answers its
+            // registration token stage.
+            let register = format!("{}/_matrix/client/v3/register", hs());
+            let mut body = serde_json::json!({
+                "username": user, "password": "aimtrix-test", "inhibit_login": true,
+            });
+            let started = post(register.clone(), body.clone()).await.unwrap();
+            let started: serde_json::Value =
+                serde_json::from_str(&started.text().await.unwrap()).unwrap();
+            body["auth"] = serde_json::json!({
+                "type": "m.login.registration_token",
+                "token": "aimtrix-dev-token",
+                "session": started["session"],
+            });
+            post(register, body).await.unwrap()
+        };
         assert!(response.status().is_success(), "couldn't register {user}");
         user
     }
@@ -2361,7 +2398,7 @@ mod tests {
         // A new account gets a cross-signing identity at sign-on, so this
         // device can set up recovery right away.
         let first_dir = tempfile::tempdir().unwrap();
-        let first = login(first_dir.path(), PASS, HS, &user, "aimtrix-test")
+        let first = login(first_dir.path(), PASS, hs(), &user, "aimtrix-test")
             .await
             .unwrap();
         let first_sync = sync::start(&first, |_| {}).await.unwrap();
@@ -2371,7 +2408,7 @@ mod tests {
         // A second device can't set it up: it doesn't have the identity's
         // keys, so it has to verify first.
         let second_dir = tempfile::tempdir().unwrap();
-        let second = login(second_dir.path(), PASS, HS, &user, "aimtrix-test")
+        let second = login(second_dir.path(), PASS, hs(), &user, "aimtrix-test")
             .await
             .unwrap();
         let second_sync = sync::start(&second, |_| {}).await.unwrap();
@@ -2570,7 +2607,7 @@ mod tests {
 
         let user = register_throwaway_user("addbuddy").await;
         let dir = tempfile::tempdir().unwrap();
-        let alice = login(dir.path(), PASS, HS, "alice", "aimtrix-test")
+        let alice = login(dir.path(), PASS, hs(), "alice", "aimtrix-test")
             .await
             .unwrap();
         let syncing = sync::start(&alice, |_| {}).await.unwrap();
@@ -2661,7 +2698,7 @@ mod tests {
         }
         alice.logout().await.unwrap();
         let buddy_dir = tempfile::tempdir().unwrap();
-        let buddy = login(buddy_dir.path(), PASS, HS, &user, "aimtrix-test")
+        let buddy = login(buddy_dir.path(), PASS, hs(), &user, "aimtrix-test")
             .await
             .unwrap();
         let password = Password::new(
@@ -2801,7 +2838,7 @@ mod tests {
 
     /// Log in as a throwaway user from [`register_throwaway_user`].
     async fn throwaway_login(dir: &std::path::Path, user: &str) -> Client {
-        login(dir, PASS, HS, user, "aimtrix-test").await.unwrap()
+        login(dir, PASS, hs(), user, "aimtrix-test").await.unwrap()
     }
 
     /// Deactivate a throwaway user, signing out all its devices.
@@ -2919,11 +2956,13 @@ mod tests {
         let buddy_sync = sync::start(&buddy, |_| {}).await.unwrap();
 
         let checks = std::panic::AssertUnwindSafe(async {
-            assert!(wait_for_support(&tracker).await);
             // An encrypted DM, as Add Buddy makes them.
             let added = rooms::add_buddy(&buddy, &away_name).await.unwrap();
             let room_id = matrix_sdk::ruma::RoomId::parse(&added.room_id).unwrap();
             away.join_room_by_id(&room_id).await.unwrap();
+            // After joining: continuwuity shows presence only to people
+            // sharing a room, us included.
+            assert!(wait_for_support(&tracker).await);
             let (mut lines, _watching, mut diffs) = watch_lines(&buddy, &added.room_id).await;
             // The away side finds the buddy's device itself before encrypting
             // its reply (sending loads the room's members).

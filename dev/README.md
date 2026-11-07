@@ -15,10 +15,21 @@ docker compose -f dev/docker-compose.yml --profile no-presence up -d
 AIMTRIX_HS=http://localhost:8009 python3 dev/seed.py
 ```
 
+continuwuity, a different homeserver implementation (Rust, from conduwuit), for checking AIMtrix isn't tied to Synapse:
+
+```sh
+docker compose -f dev/docker-compose.yml --profile continuwuity up -d
+AIMTRIX_HS=http://localhost:8011 python3 dev/seed.py
+AIMTRIX_HS=http://localhost:8011 cargo test --manifest-path src-tauri/Cargo.toml -- --include-ignored --test-threads=8
+```
+
+It has no shared-secret admin API, so the seed script and the tests register users with the registration token `aimtrix-dev-token` instead. Its first account is the server admin; the container creates `admin` (password `aimtrix-test`) at startup so that isn't alice. Known differences are under "Known issues" in `PLAN.md`.
+
 | What | Where |
 |---|---|
 | Homeserver | `http://localhost:8008` (server name `localhost`, presence on) |
 | Homeserver without presence | `http://localhost:8009` (same users and rooms once seeded; `synapse/no-presence.yaml` overrides `homeserver.yaml`) |
+| continuwuity | `http://localhost:8011` (server name `localhost`, presence on; same users and rooms once seeded) |
 | Fake old homeserver | `http://localhost:8010`, from `python3 dev/old-server.py`: no simplified sliding sync, so AIMtrix should refuse to sign on |
 | Element Web | `http://localhost:8080`, the "other person" to chat with AIMtrix |
 | Users | `alice`, `bob`, `carol`, password `aimtrix-test` |
@@ -37,7 +48,7 @@ Alice and Bob have solid-color avatars. Carol has none, to test the default Budd
 
 The seed script can't send encrypted messages (it has no crypto). To get encrypted history, send messages in those rooms from Element Web.
 
-**Leftover devices:** tests that fail or are killed leave "AIMtrix" devices on the test accounts, which slows encryption down. `python3 dev/clean-devices.py` signs out the ones not seen for an hour (`--dry-run` to just count).
+**Leftover devices:** tests that fail or are killed leave "AIMtrix" devices on the test accounts, which slows encryption down. `python3 dev/clean-devices.py` signs out the ones not seen for an hour (`--dry-run` to just count; `AIMTRIX_HS=…` for another server).
 
 **Recovery (key backup):** the Rust tests give bob recovery with the passphrase `bob test recovery passphrase`, resetting his cross-signing identity the first time. Leave bob's recovery to the tests. To try Restore Messages by hand, set up recovery for alice in Element (Settings → Encryption → Set up recovery) and keep the key it shows.
 
