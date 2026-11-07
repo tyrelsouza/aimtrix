@@ -735,7 +735,15 @@ mod tests {
         rx: &mut tokio::sync::mpsc::UnboundedReceiver<sync::Status>,
         want: sync::Status,
     ) {
-        let found = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        wait_for_within(rx, want, std::time::Duration::from_secs(20)).await;
+    }
+
+    async fn wait_for_within(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<sync::Status>,
+        want: sync::Status,
+        limit: std::time::Duration,
+    ) {
+        let found = tokio::time::timeout(limit, async {
             while let Some(status) = rx.recv().await {
                 if status == want {
                     return;
@@ -794,7 +802,14 @@ mod tests {
             .await
             .unwrap();
 
-        wait_for(&mut rx, sync::Status::SignedOut).await;
+        // Sync only finds out when its current long poll (30 s) ends, unless
+        // something else in carol's rooms ends it sooner.
+        wait_for_within(
+            &mut rx,
+            sync::Status::SignedOut,
+            std::time::Duration::from_secs(45),
+        )
+        .await;
         syncing.stop().await;
     }
 

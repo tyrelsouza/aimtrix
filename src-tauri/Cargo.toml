@@ -21,7 +21,8 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # local-server: catches the browser's redirect after "Sign On with Browser".
-matrix-sdk = { version = "0.19", features = ["local-server"] }
+# bundled-sqlite: Windows has no system SQLite to link; bundle it everywhere.
+matrix-sdk = { version = "0.19", features = ["local-server", "bundled-sqlite"] }
 keyring = "4"
 rand = "0.10.3"
 matrix-sdk-ui = "0.19"
