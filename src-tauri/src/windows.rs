@@ -58,6 +58,22 @@ pub fn open_recovery(app: &AppHandle) -> tauri::Result<()> {
 
 /// Label of the Preferences window.
 pub const PREFERENCES_LABEL: &str = "preferences";
+pub const ABOUT_LABEL: &str = "about";
+
+/// About AIMtrix: version, license, third-party licenses.
+pub fn open_about(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(ABOUT_LABEL) {
+        window.unminimize()?;
+        return window.set_focus();
+    }
+    WebviewWindowBuilder::new(app, ABOUT_LABEL, WebviewUrl::App("/about".into()))
+        .title("About AIMtrix")
+        .inner_size(300.0, 270.0)
+        .resizable(false)
+        .center()
+        .build()?;
+    Ok(())
+}
 
 /// Preferences: auto-reply and fonts.
 pub fn open_preferences(app: &AppHandle) -> tauri::Result<()> {

@@ -56,9 +56,12 @@ npm ci --no-audit --no-fund >/dev/null
 rm -rf src-tauri/target/release/bundle
 # AppImages need FUSE to build their own tooling; extract instead.
 APPIMAGE_EXTRACT_AND_RUN=1 npm run tauri build
+# The licenses of the libraries the AppImage bundles, into it and beside it.
+bash dev/appimage-notices.sh src-tauri/target/release/bundle/appimage
 
-rm -f /out/*.deb /out/*.AppImage
-cp src-tauri/target/release/bundle/deb/*.deb src-tauri/target/release/bundle/appimage/*.AppImage /out/
+rm -f /out/*.deb /out/*.AppImage /out/*.licenses.txt
+cp src-tauri/target/release/bundle/deb/*.deb src-tauri/target/release/bundle/appimage/*.AppImage \
+  src-tauri/target/release/bundle/appimage/*.licenses.txt /out/
 chown "$HOST_UID:$HOST_GID" /out/*
 echo "glibc needed:"; objdump -T src-tauri/target/release/aimtrix | grep -o "GLIBC_[0-9.]*" | sort -uV | tail -1
 '

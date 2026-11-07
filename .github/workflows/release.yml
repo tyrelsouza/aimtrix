@@ -49,6 +49,10 @@ jobs:
       - name: Build
         run: npm run tauri build
 
+      # The licenses of the libraries the AppImage bundles, into it and beside it.
+      - name: Add bundled library licenses to the AppImage
+        run: bash dev/appimage-notices.sh src-tauri/target/release/bundle/appimage
+
       - name: Attach to a draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -61,8 +65,12 @@ jobs:
 
           AIMtrix keeps your session in the system keyring, so it needs one
           running (GNOME Keyring, KWallet or another Secret Service).
+
+          AIMtrix is MIT licensed. The `.licenses.txt` file lists the libraries
+          the AppImage bundles, with their licenses and where to get their source.
           EOF
           gh release create "$GITHUB_REF_NAME" --draft --prerelease \
             --title "AIMtrix $GITHUB_REF_NAME" --notes-file notes.md \
             src-tauri/target/release/bundle/deb/aimtrix_*.deb \
-            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/appimage/*.AppImage \
+            src-tauri/target/release/bundle/appimage/*.licenses.txt

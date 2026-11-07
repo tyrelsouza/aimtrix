@@ -86,4 +86,6 @@ In a development build, the Buddy List has a "Style demo" link to `/demo`, which
 
 ## License
 
-Closed source for now. All rights reserved.
+AIMtrix is released under the [MIT License](LICENSE). It's built on open-source libraries under their own licenses (MIT, Apache-2.0, BSD, MPL-2.0 and others), listed with their full texts in [`src-tauri/THIRD-PARTY-LICENSES.html`](src-tauri/THIRD-PARTY-LICENSES.html), which every package includes and About AIMtrix (in Preferences) opens. The AppImage also bundles system libraries from Ubuntu, many under the LGPL; their licenses and source links are inside it (`usr/share/doc/aimtrix/BUNDLED-LIBRARIES.txt`) and attached to each release.
+
+AIMtrix recreates the look of AOL Instant Messenger with original art. It isn't affiliated with AOL.

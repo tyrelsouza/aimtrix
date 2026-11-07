@@ -28,6 +28,7 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 - Recreate the AIM *style* only. Never add AOL logos, the running-man mascot, original AOL sound files or other copied assets. All art and sounds must be original.
 - Never log access tokens, recovery keys or message plaintext.
 - Store the session in the OS keyring, not in plain files.
+- AIMtrix is MIT licensed. Don't add dependencies under licenses that would stop that (GPL, AGPL, SSPL…); `src-tauri/about.toml` lists the accepted ones and `cargo about` refuses others. After changing Rust or frontend dependencies, run `mise run licenses` to regenerate `src-tauri/THIRD-PARTY-LICENSES.html` (CI fails if it's stale).
 
 ## Commands
 - Install: `npm install` (the Tauri CLI is a dev dependency; no global `cargo tauri`)
@@ -39,4 +40,5 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 - Packages: `mise run package` (`dev/build-package.sh`) builds the `.deb` and `.AppImage` in an Ubuntu 22.04 container into `dist/`, so they run on Ubuntu 22.04/Debian 12 and newer (a host build on a rolling distro needs that distro's glibc). `mise run test-package [image]` installs the `.deb` on a clean container, signs on as a throwaway user and checks the session resumes, leaving screenshots in `dev/package-test/`.
 - Versions: until AIMtrix goes public, builds are `0.0.1-<seconds since midnight UTC>` (`dev/set-version.mjs`). The repo stays at the base version; the version is written only into build copies.
 - CI: `.github/workflows/ci.yml` runs only when something lands on `main` (a merged pull request): `npm run check`, the Rust unit tests and a release build on Linux, macOS and Windows, and the server tests on Linux against every dev server in Docker. Keep code building on all three.
+- Licenses: `mise run licenses` (`dev/third-party-licenses.mjs`, needs `cargo install --locked cargo-about@0.9.3 --features cli`, the version CI uses) regenerates the third-party notices. `dev/appimage-notices.sh` adds the bundled libraries' licenses to the AppImage after `tauri build`; the package build and release workflow run it.
 - Releases: `mise run release` tags HEAD and pushes the tag; `.github/workflows/release.yml` builds on Ubuntu 22.04 and attaches the packages to a draft GitHub release. Only the user runs it.

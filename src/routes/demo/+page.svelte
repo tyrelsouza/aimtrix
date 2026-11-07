@@ -51,6 +51,27 @@
     </div>
   </section>
 
+  <!-- About AIMtrix (from Preferences) -->
+  <section class="aim-window" style="width: 300px">
+    <div class="aim-titlebar">
+      <img class="aim-titlebar__icon" src={appIcon} alt="" />
+      <span class="aim-titlebar__title">About AIMtrix</span>
+      <div class="aim-titlebar__controls">
+        <button class="aim-titlebar__btn aim-titlebar__btn--close" aria-label="Close"></button>
+      </div>
+    </div>
+    <div class="aim-window__body">
+      <div class="row"><img src={appIcon} alt="" width="48" height="48" /><b>AIMtrix</b> Version 0.0.1</div>
+      <p>A Matrix chat client in the style of AOL Instant Messenger. Not affiliated with AOL.</p>
+      <p>© 2026 Tyrel Souza. MIT License.</p>
+      <div class="row end">
+        <button class="aim-btn">License…</button>
+        <button class="aim-btn">Third-Party…</button>
+        <button class="aim-btn is-default">OK</button>
+      </div>
+    </div>
+  </section>
+
   <!-- Buddy List -->
   <section class="aim-window" style="width: 220px; height: 420px">
     <div class="aim-titlebar">

@@ -480,6 +480,31 @@ pub fn open_preferences(app: AppHandle) -> Result<(), String> {
     windows::open_preferences(&app).map_err(|e| e.to_string())
 }
 
+/// Open About AIMtrix, or focus it.
+#[tauri::command]
+pub fn open_about(app: AppHandle) -> Result<(), String> {
+    windows::open_about(&app).map_err(|e| e.to_string())
+}
+
+/// Open AIMtrix's license (`"license"`) or the third-party licenses
+/// (`"third-party"`), shipped with the app, in the default viewer.
+#[tauri::command]
+pub fn open_license(app: AppHandle, which: String) -> Result<(), String> {
+    let file = match which.as_str() {
+        "license" => "LICENSE.txt",
+        "third-party" => "THIRD-PARTY-LICENSES.html",
+        _ => return Err(format!("No license called {which}")),
+    };
+    let path = app
+        .path()
+        .resource_dir()
+        .map_err(|e| e.to_string())?
+        .join(file);
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|e| format!("Couldn't open {file}: {e}"))
+}
+
 /// The preferences. Changes arrive as `preferences:update` events.
 #[tauri::command]
 pub fn get_preferences(store: State<'_, preferences::Store>) -> preferences::Preferences {

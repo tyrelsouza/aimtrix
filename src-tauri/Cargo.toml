@@ -3,6 +3,7 @@ name = "aimtrix"
 version = "0.0.1"
 description = "A Matrix client with an AIM-style interface"
 authors = ["Tyrel Souza"]
+license = "MIT"
 edition = "2024"
 
 [lib]

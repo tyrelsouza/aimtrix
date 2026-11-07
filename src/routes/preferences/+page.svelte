@@ -94,6 +94,7 @@
   {/if}
 
   <div class="actions">
+    <button class="aim-btn about" type="button" onclick={() => invoke("open_about")}>About…</button>
     <button class="aim-btn" type="button" onclick={close}>Cancel</button>
     <button class="aim-btn is-default" type="submit" disabled={busy || !prefs}>OK</button>
   </div>
@@ -139,5 +140,8 @@
     justify-content: flex-end;
     gap: 6px;
     margin-top: auto;
+  }
+  .about {
+    margin-right: auto;
   }
 </style>
