@@ -1,13 +1,18 @@
-<!-- Preferences: auto-reply and fonts. Changes apply when you click OK. -->
+<!-- Preferences: auto-reply, the tray and fonts. Changes apply when you click OK. -->
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { COLORS } from "$lib/compose";
   import { FONT_FACES, FONT_SIZES, type Preferences } from "$lib/preferences";
+  import { isMac } from "$lib/platform";
 
   let prefs = $state<Preferences | null>(null);
   let busy = $state(false);
   let error = $state("");
+
+  /** Whether there's a tray to keep running in (Windows; Linux with one). */
+  let trayAvailable = $state(false);
+  invoke<boolean>("tray_available").then((a) => (trayAvailable = a));
 
   invoke<Preferences>("get_preferences")
     .then((p) => (prefs = p))
@@ -44,6 +49,19 @@
       </label>
       <p class="hint">Once per conversation, to the first message that arrives while you're away.</p>
     </fieldset>
+
+    {#if !isMac}
+      <fieldset class="aim-groupbox" disabled={busy}>
+        <legend>Tray</legend>
+        <label class="check">
+          <input type="checkbox" bind:checked={prefs.closeToTray} disabled={!trayAvailable} />
+          Keep running in the tray when the Buddy List is closed
+        </label>
+        {#if !trayAvailable}
+          <p class="hint">No system tray found on this desktop.</p>
+        {/if}
+      </fieldset>
+    {/if}
 
     <fieldset class="aim-groupbox" disabled={busy}>
       <legend>Fonts</legend>

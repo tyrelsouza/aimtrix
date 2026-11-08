@@ -3,7 +3,7 @@
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
 
-use crate::{matrix::rooms::Kind, session};
+use crate::{matrix::rooms::Kind, preferences, session, tray};
 
 /// Added to each window's content size for what AIMtrix draws around it:
 /// the AIM-style title bar (18 px) and the 3 px window frame on each side
@@ -21,17 +21,43 @@ fn aim_window(
     WebviewWindowBuilder::new(app, label, url).decorations(false)
 }
 
-/// The Buddy List is the `main` window.
+/// The Buddy List is the `main` window. Shows it again if it was hidden in
+/// the tray.
 pub fn open_buddy_list(app: &AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
+        window.show()?;
+        window.unminimize()?;
         return window.set_focus();
     }
-    aim_window(app, "main", WebviewUrl::App("/".into()))
+    let window = aim_window(app, "main", WebviewUrl::App("/".into()))
         .title("Buddy List")
         .inner_size(260.0 + FRAME_WIDTH, 540.0 + FRAME_HEIGHT)
         .min_inner_size(200.0 + FRAME_WIDTH, 300.0 + FRAME_HEIGHT)
         .build()?;
+    // With "close to tray", closing only hides it, and AIMtrix keeps running.
+    let app = app.clone();
+    let hide = window.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event
+            && tray::shown(&app)
+            && app.state::<preferences::Store>().get().close_to_tray
+        {
+            api.prevent_close();
+            if let Err(e) = hide.hide() {
+                eprintln!("Couldn't hide the Buddy List: {e}");
+            }
+        }
+    });
     Ok(())
+}
+
+/// Really close the Buddy List (signing off), even with "close to tray".
+pub fn close_buddy_list(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main")
+        && let Err(e) = window.destroy()
+    {
+        eprintln!("Couldn't close the Buddy List: {e}");
+    }
 }
 
 /// `signed_out` makes Sign On explain that the server ended the session.
@@ -91,7 +117,7 @@ pub fn open_about(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Preferences: auto-reply and fonts.
+/// Preferences: auto-reply, the tray and fonts.
 pub fn open_preferences(app: &AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window(PREFERENCES_LABEL) {
         window.unminimize()?;
@@ -103,7 +129,7 @@ pub fn open_preferences(app: &AppHandle) -> tauri::Result<()> {
         WebviewUrl::App("/preferences".into()),
     )
     .title("Preferences")
-    .inner_size(340.0 + FRAME_WIDTH, 330.0 + FRAME_HEIGHT)
+    .inner_size(340.0 + FRAME_WIDTH, 390.0 + FRAME_HEIGHT)
     .resizable(false)
     .center()
     .build()?;

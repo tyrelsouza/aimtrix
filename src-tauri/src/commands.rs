@@ -114,18 +114,10 @@ pub fn cancel_browser_login(pending: State<'_, BrowserSignOn>) {
     }
 }
 
-/// Sign off, open Sign On, and close the window that called this.
+/// Sign off, open Sign On, and close the Buddy List.
 #[tauri::command]
-pub async fn logout(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    match session::end(&app).await {
-        Some(client) => matrix::sign_off(&data_dir, client).await?,
-        None => matrix::forget(&data_dir).await?,
-    }
-
-    windows::open_sign_on(&app, false).map_err(|e| e.to_string())?;
-    window.close().map_err(|e| e.to_string())?;
-    Ok(())
+pub async fn logout(app: AppHandle) -> Result<(), String> {
+    session::sign_off(&app).await
 }
 
 /// The signed-on user ID, or `None` before sign-on.
@@ -463,21 +455,20 @@ pub async fn own_presence(session: State<'_, Session>) -> Result<Own, String> {
 
 /// Go away with `message`, or come back with `None`.
 #[tauri::command]
-pub async fn set_away(session: State<'_, Session>, message: Option<String>) -> Result<(), String> {
-    let presence = session
-        .signed
-        .lock()
-        .await
-        .as_ref()
-        .map(|s| s.presence.clone())
-        .ok_or("Not signed on.")?;
-    presence.set_away(message.as_deref()).await
+pub async fn set_away(app: AppHandle, message: Option<String>) -> Result<(), String> {
+    session::set_away(&app, message.as_deref()).await
 }
 
 /// Open Preferences, or focus it.
 #[tauri::command]
 pub fn open_preferences(app: AppHandle) -> Result<(), String> {
     windows::open_preferences(&app).map_err(|e| e.to_string())
+}
+
+/// Whether there's a tray icon to keep running in, for Preferences.
+#[tauri::command]
+pub fn tray_available(app: AppHandle) -> bool {
+    crate::tray::shown(&app)
 }
 
 /// Open About AIMtrix, or focus it.

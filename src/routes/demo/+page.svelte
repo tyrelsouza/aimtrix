@@ -282,6 +282,10 @@
         <label class="row" style="align-items: center; gap: 4px"><input type="checkbox" /> Send my away message as an auto-reply</label>
       </fieldset>
       <fieldset class="aim-groupbox">
+        <legend>Tray</legend>
+        <label class="row" style="align-items: center; gap: 4px"><input type="checkbox" checked /> Keep running in the tray when the Buddy List is closed</label>
+      </fieldset>
+      <fieldset class="aim-groupbox">
         <legend>Fonts</legend>
         <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 6px; align-items: center">
           <span>Conversations:</span>

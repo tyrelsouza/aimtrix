@@ -10,6 +10,8 @@ export type Preferences = {
   /** One of `FONT_FACES`; "" is the app's own font. */
   fontFace: string;
   fontSize: FontSize;
+  /** Closing the Buddy List hides it in the tray instead of quitting. */
+  closeToTray: boolean;
 };
 
 export type FontSize = "small" | "normal" | "large" | "larger";

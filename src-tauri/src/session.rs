@@ -26,7 +26,7 @@ use crate::{
         upload,
         verify::{self, Flow, Step, Trust},
     },
-    preferences, windows,
+    preferences, tray, windows,
 };
 
 /// Event carrying the new [`Status`] to every window.
@@ -88,6 +88,8 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
         let app = app.clone();
         move || app.state::<preferences::Store>().get().auto_reply
     });
+    let user = client.user_id().map(ToString::to_string);
+    tray::update(app, |tray| tray.user = user);
     *app.state::<Session>().signed.lock().await = Some(Signed {
         client,
         sync,
@@ -120,6 +122,7 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
     *state.verification.lock().unwrap() = None;
     *state.verification_step.lock().unwrap() = None;
     app.state::<Session>().buddies.lock().unwrap().clear();
+    tray::update(app, |tray| *tray = tray::State::default());
     for (_, upload) in app.state::<Session>().uploads.lock().unwrap().drain() {
         upload.abort();
     }
@@ -493,12 +496,16 @@ fn on_status(app: &AppHandle, status: Status) {
 }
 
 fn on_presence(app: &AppHandle, own: Own) {
+    let away = own.supported.filter(|&s| s).map(|_| own.away.is_some());
+    tray::update(app, |tray| tray.away = away);
     if let Err(e) = app.emit(PRESENCE_EVENT, &own) {
         eprintln!("Couldn't send your presence to windows: {e}");
     }
 }
 
 fn on_buddies(app: &AppHandle, buddies: Vec<Buddy>) {
+    let unread = buddies.iter().filter(|b| b.unread).count();
+    tray::update(app, |tray| tray.unread = unread);
     *app.state::<Session>().buddies.lock().unwrap() = buddies.clone();
     if let Err(e) = app.emit(BUDDY_LIST_EVENT, &buddies) {
         eprintln!("Couldn't send the Buddy List to windows: {e}");
@@ -520,9 +527,33 @@ async fn signed_out(app: &AppHandle) {
     if let Err(e) = windows::open_sign_on(app, true) {
         eprintln!("Couldn't open Sign On: {e}");
     }
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.close();
+    windows::close_buddy_list(app);
+}
+
+/// Sign off (from the Buddy List or the tray): end the session on the
+/// server, forget it here, and go back to Sign On.
+pub async fn sign_off(app: &AppHandle) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    match end(app).await {
+        Some(client) => matrix::sign_off(&data_dir, client).await?,
+        None => matrix::forget(&data_dir).await?,
     }
+    windows::open_sign_on(app, false).map_err(|e| e.to_string())?;
+    windows::close_buddy_list(app);
+    Ok(())
+}
+
+/// Go away with `message`, or come back with `None`.
+pub async fn set_away(app: &AppHandle, message: Option<&str>) -> Result<(), String> {
+    let presence = app
+        .state::<Session>()
+        .signed
+        .lock()
+        .await
+        .as_ref()
+        .map(|s| s.presence.clone())
+        .ok_or("Not signed on.")?;
+    presence.set_away(message).await
 }
 
 /// Share the new recovery state, and open Restore Messages the first time

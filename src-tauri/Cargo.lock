@@ -64,6 +64,7 @@ dependencies = [
  "hmac 0.12.1",
  "image",
  "keyring",
+ "libloading",
  "matrix-sdk",
  "matrix-sdk-crypto",
  "matrix-sdk-ui",

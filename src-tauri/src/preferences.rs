@@ -1,4 +1,4 @@
-//! Preferences: auto-reply and fonts. Kept as JSON in the app's config
+//! Preferences: auto-reply, the tray and fonts. Kept as JSON in the app's config
 //! folder (they aren't secret), shared by every account on this computer.
 
 use std::{
@@ -47,6 +47,10 @@ pub struct Preferences {
     /// One of [`FONT_FACES`].
     pub font_face: String,
     pub font_size: FontSize,
+    /// Closing the Buddy List hides it in the tray and AIMtrix keeps
+    /// running, when there's a tray (`tray.rs`). Off by default on Linux,
+    /// where trays are often missing; on by default on Windows.
+    pub close_to_tray: bool,
 }
 
 impl Default for Preferences {
@@ -56,6 +60,7 @@ impl Default for Preferences {
             text_color: "#000000".to_owned(),
             font_face: String::new(),
             font_size: FontSize::Normal,
+            close_to_tray: cfg!(target_os = "windows"),
         }
     }
 }
@@ -161,6 +166,7 @@ mod tests {
             text_color: "#0000ff".to_owned(),
             font_face: "Georgia".to_owned(),
             font_size: FontSize::Large,
+            close_to_tray: true,
         };
         save(&path, &prefs).unwrap();
         assert_eq!(load(&path), prefs);

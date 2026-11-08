@@ -6,6 +6,7 @@ mod commands;
 mod matrix;
 mod preferences;
 mod session;
+mod tray;
 mod windows;
 
 use tauri::{AppHandle, Manager};
@@ -17,8 +18,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(matrix::Session::default())
         .manage(commands::BrowserSignOn::default())
+        .manage(tray::Tray::default())
         .setup(|app| {
             app.manage(preferences::Store::open(app.handle())?);
+            if let Err(e) = tray::create(app.handle()) {
+                eprintln!("Couldn't add the tray icon: {e}");
+            }
             let app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = startup(&app).await {
@@ -58,6 +63,7 @@ pub fn run() {
             commands::open_add_buddy,
             commands::open_preferences,
             commands::open_about,
+            commands::tray_available,
             commands::open_license,
             commands::get_preferences,
             commands::set_preferences,
@@ -81,8 +87,25 @@ pub fn run() {
             commands::confirm_verification,
             commands::cancel_verification
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // macOS: like other Mac apps, keep running when the last window
+            // closes (Cmd+Q still quits), and reopen from the Dock.
+            #[cfg(target_os = "macos")]
+            match event {
+                tauri::RunEvent::ExitRequested {
+                    code: None, api, ..
+                } => api.prevent_exit(),
+                tauri::RunEvent::Reopen {
+                    has_visible_windows: false,
+                    ..
+                } => tray::open(app),
+                _ => {}
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
 
 /// Resume the saved session straight into the Buddy List, or show Sign On.

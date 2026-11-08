@@ -44,7 +44,8 @@
         "section": "net",
         "recommends": [
           "gnome-keyring | kwalletmanager",
-          "fonts-noto-color-emoji"
+          "fonts-noto-color-emoji",
+          "libayatana-appindicator3-1"
         ],
         "depends": [
           "libc6 (>= 2.35)",
