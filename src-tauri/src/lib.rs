@@ -84,8 +84,7 @@ pub fn run() {
             commands::verification_step,
             commands::accept_verification,
             commands::start_verification,
-            commands::confirm_verification,
-            commands::cancel_verification
+            commands::confirm_verification
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -90,7 +90,7 @@ In a development build, the Buddy List has a "Style demo" link to `/demo`, which
 - **Rust core** (`src-tauri/`): a single [matrix-rust-sdk](https://github.com/matrix-org/matrix-rust-sdk) client with an encrypted SQLite store owns the whole Matrix session: sync, rooms, timelines, encryption. The Matrix code lives in `src-tauri/src/matrix/`.
 - **Windows** (`src/`): SvelteKit (Svelte 5, TypeScript) with one route per window type and hand-written CSS in `src/styles/aim-chrome.css`. Windows hold no Matrix code. They call Tauri commands (`src-tauri/src/commands.rs`) and listen for events such as `buddylist:update` and `room:<id>:timeline_diff`.
 
-[`PLAN.md`](PLAN.md) has the full design and how each AIM idea maps to Matrix. [`CLAUDE.md`](CLAUDE.md) has the working rules for the code.
+[`docs/`](docs/README.md) explains the backend and frontend in depth: entry points, the session lifecycle, every module and window, and every command and event. [`PLAN.md`](PLAN.md) has the full design and how each AIM idea maps to Matrix. [`CLAUDE.md`](CLAUDE.md) has the working rules for the code.
 
 ## License
 

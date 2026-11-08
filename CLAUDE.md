@@ -1,6 +1,8 @@
 # AIMtrix
 
-A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md` for the full design, the AIM→Matrix mapping and the build phases.
+A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md` for the full design, the AIM→Matrix mapping and the build phases, and `docs/` for how the code is organized (backend, frontend, every command and event).
+
+When a change adds, removes or renames a command, event, window, module or dev task, update the matching page in `docs/` (`ipc.md`, `backend.md`, `frontend.md`, `development.md`).
 
 ## Workflow
 - Work through the `## Steps` checklist in `PLAN.md` one step at a time, in order. Don't start the next step unless asked.
@@ -34,6 +36,7 @@ A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md`
 - Install: `npm install` (the Tauri CLI is a dev dependency; no global `cargo tauri`)
 - Dev: `npm run tauri dev`
 - Type-check frontend: `npm run check`
+- Lint Rust: `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`. Fix everything clippy reports (properly, not with `#[allow]`); CI fails on any warning.
 - Rust tests: `cargo test --manifest-path src-tauri/Cargo.toml`. Tests that need the dev homeserver are `#[ignore = "needs the dev homeserver"]`; run them with `-- --include-ignored --test-threads=8` (every dev server up and seeded: the default, `no-presence`, `continuwuity` and `mas` profiles, since some tests always use a particular one; more threads overload the dev server and tests time out). They must log out so no devices pile up on the test accounts; failed or killed runs still leave some, so run `python3 dev/clean-devices.py` when tests get slow.
 - Local test homeserver (see `dev/README.md`): `docker compose -f dev/docker-compose.yml up -d`, then `python3 dev/seed.py`. A second one with presence off runs on `http://localhost:8009`: add `--profile no-presence` to `up`, and seed it with `AIMTRIX_HS=http://localhost:8009 python3 dev/seed.py`. Users `alice`/`bob`/`carol`, password `aimtrix-test`, homeserver `http://localhost:8008`, Element Web at `http://localhost:8080`. Always test against this, never real accounts. A continuwuity server (a different implementation) runs on `http://localhost:8011` with `--profile continuwuity`; seed it and run the server tests against it with `AIMTRIX_HS=http://localhost:8011` (the tests read the same variable as `dev/seed.py`). Likewise Synapse behind Matrix Authentication Service, like matrix.org: `--profile mas`, homeserver `http://localhost:8013`, MAS on `http://localhost:8014`.
 - Tasks: `mise tasks` lists shortcuts for all of these (`mise run check`, `mise run test-server`, …).
