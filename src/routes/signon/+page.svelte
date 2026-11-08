@@ -37,9 +37,16 @@
   let username = $state("");
   let password = $state("");
   let busy = $state(false);
-  // Set when the server ended the session (e.g. signed out from another client).
+  // Set when the server ended the session (e.g. signed out from another
+  // client), or when the saved session couldn't be resumed (it's kept, in
+  // case the cause is temporary; signing on again replaces it).
+  const resumeFailed = page.url.searchParams.get("resume-failed");
   let error = $state(
-    page.url.searchParams.has("signed-out") ? "You were signed out. Please sign on again." : "",
+    page.url.searchParams.has("signed-out")
+      ? "You were signed out. Please sign on again."
+      : resumeFailed !== null
+        ? `Couldn't resume your session (${resumeFailed.replace(/\.$/, "")}). Quit and open AIMtrix again to retry, or sign on again.`
+        : "",
   );
   let passwordInput: HTMLInputElement | undefined = $state();
 

@@ -19,6 +19,18 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # Only versions Cargo and Tauri accept, and only commits on main, which
+      # CI has checked (it runs only there).
+      - name: Check the tag
+        run: |
+          node dev/set-version.mjs "${GITHUB_REF_NAME#v}"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
+            { echo "::error::$GITHUB_REF_NAME isn't on main"; exit 1; }
+
       - name: Create a draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -37,8 +49,10 @@ jobs:
           AIMtrix is MIT licensed. The `.licenses.txt` file lists the libraries
           the AppImage bundles, with their licenses and where to get their source.
           EOF
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --draft --prerelease --title "AIMtrix $GITHUB_REF_NAME" --notes-file notes.md
+          # Re-running the workflow keeps the draft it made the first time.
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --draft --prerelease --title "AIMtrix $GITHUB_REF_NAME" --notes-file notes.md
 
   linux:
     needs: release
@@ -73,8 +87,10 @@ jobs:
       # running them here would about double the build minutes.
       - run: npm run check
 
+      # --locked: exactly the crates in Cargo.lock, which the third-party
+      # notices list.
       - name: Build
-        run: npm run tauri build
+        run: npm run tauri build -- -- --locked
 
       # The licenses of the libraries the AppImage bundles, into it and beside it.
       - name: Add bundled library licenses to the AppImage
@@ -84,7 +100,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "$GITHUB_REF_NAME" \
+          gh release upload "$GITHUB_REF_NAME" --clobber \
             src-tauri/target/release/bundle/deb/aimtrix_*.deb \
             src-tauri/target/release/bundle/appimage/*.AppImage \
             src-tauri/target/release/bundle/appimage/*.licenses.txt
@@ -119,4 +135,4 @@ jobs:
       - name: Attach to the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/*.dmg
+        run: gh release upload "$GITHUB_REF_NAME" --clobber dist/*.dmg

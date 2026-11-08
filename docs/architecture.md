@@ -17,7 +17,7 @@ AIMtrix is a [Tauri v2](https://v2.tauri.app) desktop app. One native process ru
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │        │ HTTPS: sliding sync, media, keys        │ keyring    │ files      │
 │        ▼                                         ▼            ▼            │
-│   homeserver                              OS keyring    matrix-store/      │
+│   homeserver                              OS keyring    stores/<name>/     │
 │                                                         preferences.json   │
 │                                                                             │
 │   Webviews, one per window, each running the SvelteKit SPA at one route:    │
@@ -36,14 +36,14 @@ Tauri gives each window its own JavaScript context. A JS Matrix client would hav
 - **Windows are created in Rust**, in `windows.rs`, never in `tauri.conf.json` (its `windows` list is empty). Each label must also be in `src-tauri/capabilities/default.json`, or the window can't listen to events or close itself. Commands still work without it, which makes the mistake easy to miss.
 - **One window per room.** Room windows are labeled `room-<key>`, where the key is a stable hash of the room ID (`windows::room_key`). Opening a room whose window exists focuses it.
 - **Room-scoped events go only to their window** (`emit_to(label, …)`), named `room:<key>:…`. App-wide events (`sync:status`, `buddylist:update`, …) go to every window (`emit`).
-- **Late windows catch up.** Rust keeps the latest value of every app-wide event in `Session` (status, buddies, recovery, trust, verification step). A window that opens later asks for it with a command. The frontend always **listens first, then asks**, so a change in between isn't lost (see [Frontend: the watch pattern](frontend.md#the-watch-pattern)).
+- **Late windows catch up.** Rust keeps the latest value of every event a window may open after: status, buddies, recovery, trust and the verification step in `Session`, your presence in the presence `Tracker`, and preferences in `preferences::Store`. A window that opens later asks for it with a command. The frontend always **listens first, then asks**, so a change in between isn't lost (see [Frontend: the watch pattern](frontend.md#the-watch-pattern)).
 
 ## Data at rest
 
 | What | Where | Notes |
 |---|---|---|
 | Saved session | OS keyring, service `bike.tyrel.aimtrix`, user `session` | JSON: homeserver, the store passphrase, and either a password session or an OAuth session with refresh token (`matrix/keyring.rs`). Never written to a file. |
-| Matrix store | `<app data>/matrix-store/` (on Linux `~/.local/share/bike.tyrel.aimtrix/matrix-store/`) | matrix-sdk's SQLite stores (state, crypto, event cache, media), encrypted with the random passphrase kept in the keyring. A new sign-on always starts a fresh store, since a store belongs to one device. |
+| Matrix store | `<app data>/stores/<random name>/` (on Linux `~/.local/share/bike.tyrel.aimtrix/stores/…`), a folder per sign-on, named in the saved session; sessions saved before that use `<app data>/matrix-store/` | matrix-sdk's SQLite stores (state, crypto, event cache, media), encrypted with the random passphrase kept in the keyring. A new sign-on always starts a fresh store, since a store belongs to one device. |
 | Preferences | `<app config>/preferences.json` (on Linux `~/.config/bike.tyrel.aimtrix/`) | Not secret: auto-reply, text color, font, size, close to tray. Written atomically (temp file and rename). |
 | Last server | The Sign On webview's `localStorage`, key `aimtrix.signon.server` | Only a convenience for the server picker. |
 
@@ -57,17 +57,18 @@ Secrets never leave Rust: tokens, the store passphrase and recovery keys are nev
 main.rs main()
   └─ (Linux) set WEBKIT_DISABLE_DMABUF_RENDERER=1 unless already set
   └─ aimtrix_lib::run()                                         lib.rs
-       ├─ plugins: dialog, opener
+       ├─ plugins: single-instance (a second launch shows this one), dialog, opener
        ├─ manage: matrix::Session, commands::BrowserSignOn, tray::Tray
        ├─ setup: manage preferences::Store, tray::create(), spawn startup()
        ├─ invoke_handler: the full command list
        └─ run loop (macOS: keep running with no windows; Dock click reopens)
 
 startup()                                                       lib.rs
-  └─ matrix::resume(data_dir)           keyring → restore client from store (works offline)
-       ├─ Some(client) → session::begin(client) → windows::open_buddy_list()
-       ├─ None         → windows::open_sign_on()
-       └─ Err          → matrix::forget() → windows::open_sign_on()
+  └─ matrix::resume(data_dir)           keyring → restore client from its store (works offline)
+       ├─ Some(account) → session::begin(Start::Resumed) → windows::open_buddy_list()
+       ├─ None          → windows::open_sign_on()
+       └─ Err           → windows::open_sign_on(ResumeFailed(why))   the session is kept: the
+                          cause may be temporary, and the store holds the keys to old messages
 ```
 
 ### Sign on
@@ -79,8 +80,10 @@ signon/+page.svelte
      or invoke("login_with_browser", {homeserver})   (cancel_browser_login to stop)
 
 commands::login / login_with_browser
-  └─ matrix::sign_on / sign_on_with_browser      new store, check sliding sync, log in, save to keyring
-  └─ session::begin(client)                      start sync and every watcher (below)
+  └─ matrix::sign_on / sign_on_with_browser      new store folder, check sliding sync, log in
+  └─ session::begin(Start::New)                  under the session lock: refuse if a session is
+                                                 already running, save to the keyring, delete other
+                                                 stores, start sync and every watcher (below)
   └─ windows::open_buddy_list(); close the Sign On window
 ```
 
@@ -99,19 +102,23 @@ All of it is stored in `Signed`, so `session::end` can stop each piece.
 
 ```
 +page.svelte (Buddy List)  invoke("open_room", {roomId})
-commands::open_room        look the room up in Session.buddies (refuses invitations)
+commands::open_room        look the room up in Session.buddies (refuses invitations), or in the
+                           client for a DM Add Buddy just made that hasn't reached the list yet
 windows::open_room         focus existing room-<key>, or create it at /im?room=… or /chat?room=…
                            on Destroyed → session::unwatch_timeline()
 
 im/ or chat/+page.svelte → Transcript.svelte
   watchTimeline(): listen room:<key>:timeline_diff, then invoke("room_timeline", {roomId})
 commands::room_timeline → session::watch_timeline
-  └─ timeline::watch     matrix-sdk Timeline → Vec<Line> now; each change → Diff → emit_to(room-<key>)
-  └─ store Watching in Session.timelines; subscribe open rooms in sliding sync
+  └─ stop any earlier watch of the room (a reloaded window)
+  └─ timeline::watch     matrix-sdk Timeline → lines now; each change → Diff → emit_to(room-<key>)
+                         returns {watch, lines}; every diff carries the same watch number
+  └─ store Watching in Session.timelines (dropped again if the window closed meanwhile);
+     subscribe open rooms in sliding sync
 chat/ also: watchChatRoom() → invoke("chat_room") → members::watch → room:<key>:members / :topic
 ```
 
-Each timeline item maps to exactly one `Line`, so the window applies `Diff`s by index, the same way matrix-sdk's `VectorDiff`s apply to its items.
+Each timeline item maps to exactly one `Line`, so the window applies `Diff`s by index, the same way matrix-sdk's `VectorDiff`s apply to its items. It applies only diffs with its watch's number, so after a reload, diffs from the replaced watch can't land on the new lines.
 
 ### Send a message
 
@@ -130,12 +137,22 @@ Files go through `send_files` (paths, or an Open dialog), `send_pasted` (raw byt
 ```
 Sign Off (Buddy List or tray) → invoke("logout") / tray menu → session::sign_off()
   └─ session::end()          stop every watcher, clear Session, close room and dialog windows
-  └─ matrix::sign_off()      delete the device / revoke the OAuth token, forget keyring and store
-  └─ open Sign On; close the Buddy List (destroy, even with "close to tray")
+  └─ matrix::sign_off()      delete the device / revoke the OAuth token, then forget: the keyring
+                             entry only if it's still this device's, and this session's store
+  └─ open Sign On; close the Buddy List (destroy, even with "close to tray"), whatever failed
 
 Token rejected (signed out elsewhere) → sync reports Status::SignedOut
-  └─ session::signed_out()   end(), forget(), open Sign On with ?signed-out, close the Buddy List
+  └─ session::signed_out()   end(), forget(account), open Sign On with ?signed-out, close the Buddy List
 ```
+
+## Security
+
+- **Untrusted input** is everything from Matrix (other people's messages, names, topics, files) and from homeservers.
+- **Message HTML** is sanitized in Rust (`matrix/html.rs`) before any window sees it; it's the only HTML rendered as HTML.
+- **Windows stay on AIMtrix's own pages.** `windows::aim_window` refuses navigation anywhere else and every new-window request, and the Content Security Policy in `tauri.conf.json` allows scripts only from the app and images only from the app or `data:`. A web page can never end up with access to the app's commands.
+- **Opening things outside the app:** only the server's OAuth sign-on page (https, or http on this computer) and AIMtrix's two license files.
+- **Media** is downloaded only when known to be small (see `timeline::Watching::thumbnail`), since the SDK downloads whole files.
+- **One instance:** a second launch shows the running AIMtrix instead of opening the same store and device again.
 
 ## Platform notes
 

@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { watchValue } from "$lib/watch";
 
 /** Mirrors `Trust` in src-tauri/src/matrix/verify.rs. */
 export type Trust = "unknown" | "no-cross-signing" | "verified" | "unverified";
@@ -23,14 +22,7 @@ export type Step =
  * change. Returns a function that stops listening.
  */
 export function watchTrust(onChange: (trust: Trust) => void): () => void {
-  let stopped = false;
-  // Listen before asking, so a change in between isn't missed.
-  const unlisten = listen<Trust>("verification:trust", (e) => onChange(e.payload));
-  invoke<Trust>("device_trust").then((t) => !stopped && onChange(t));
-  return () => {
-    stopped = true;
-    unlisten.then((f) => f());
-  };
+  return watchValue("verification:trust", "device_trust", onChange);
 }
 
 /**
@@ -38,16 +30,5 @@ export function watchTrust(onChange: (trust: Trust) => void): () => void {
  * and then every change. Returns a function that stops listening.
  */
 export function watchStep(onChange: (step: Step | null) => void): () => void {
-  let stopped = false;
-  let changed = false;
-  const unlisten = listen<Step>("verification:step", (e) => {
-    changed = true;
-    onChange(e.payload);
-  });
-  // An event that arrived first is newer than this answer.
-  invoke<Step | null>("verification_step").then((s) => !stopped && !changed && onChange(s));
-  return () => {
-    stopped = true;
-    unlisten.then((f) => f());
-  };
+  return watchValue("verification:step", "verification_step", onChange);
 }

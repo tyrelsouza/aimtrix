@@ -82,10 +82,14 @@ pub enum Section {
 
 /// A room is a DM if it is in `m.direct` or has at most two members, unless
 /// tagged [`CHAT_TAG`].
+///
+/// An invitation usually comes without a member count, so there only the
+/// invite's own "direct" flag (part of `in_m_direct`) counts.
 pub fn kind(room: &RoomFacts) -> Kind {
+    let few = room.member_count <= 2 && room.membership != Membership::Invited;
     if room.chat_tag {
         Kind::Group
-    } else if room.in_m_direct || room.member_count <= 2 {
+    } else if room.in_m_direct || few {
         Kind::Dm
     } else {
         Kind::Group
@@ -259,7 +263,15 @@ async fn buddy(room: &RoomListItem, icons: &Arc<Icons>, presence: &Tracker) -> O
 
 /// The other person in a DM: from `m.direct` if it says, otherwise the
 /// room's first hero (heroes leave us out).
+///
+/// A joined DM where we're the only member left has no one to show:
+/// `m.direct` and the heroes both keep people who left. The member count is
+/// in memory; looking members up in the store here, for every room on every
+/// rebuild of the list, made everything slower.
 async fn other_person(room: &Room) -> Option<OwnedUserId> {
+    if room.state() == RoomState::Joined && room.active_members_count() <= 1 {
+        return None;
+    }
     let own = room.own_user_id();
     room.direct_targets()
         .iter()
@@ -322,7 +334,9 @@ pub fn buddy_id(input: &str, own_server: &ServerName) -> Result<OwnedUserId, Str
     } else if input.contains(':') {
         format!("@{input}")
     } else {
-        format!("@{input}:{own_server}")
+        // Like AIM screen names, a bare name isn't case-sensitive: Matrix
+        // IDs are lowercase, so "Bob" means @bob.
+        format!("@{}:{own_server}", input.to_lowercase())
     };
     UserId::parse(&full).map_err(|_| not_an_id())
 }
@@ -397,12 +411,18 @@ async fn existing_dm(
     if let Some(room) = just_made.next_back() {
         return Some(room);
     }
-    let in_m_direct = client.get_dm_rooms(user);
+    let in_m_direct = client
+        .get_dm_rooms(user)
+        .filter(|room| room.state() == RoomState::Joined);
     let just_us = client
         .joined_rooms()
         .into_iter()
         .filter(|room| room.active_members_count() <= 2);
     for room in in_m_direct.chain(just_us) {
+        // Tagged as a Chat Room: opening it wouldn't give an IM.
+        if facts(&room).await.chat_tag {
+            continue;
+        }
         let members = room
             .members_no_sync(RoomMemberships::JOIN | RoomMemberships::INVITE)
             .await
@@ -486,6 +506,7 @@ mod tests {
     fn buddy_ids_accept_names_and_full_ids() {
         let ours = <&ServerName>::try_from("localhost").unwrap();
         assert_eq!(buddy_id(" bob ", ours).unwrap(), "@bob:localhost");
+        assert_eq!(buddy_id("Bob", ours).unwrap(), "@bob:localhost");
         assert_eq!(
             buddy_id("@bob:matrix.org", ours).unwrap(),
             "@bob:matrix.org"
@@ -638,6 +659,12 @@ mod tests {
         let invite = RoomFacts {
             membership: Membership::Invited,
             ..room(6)
+        };
+        assert_eq!(kind(&invite), Kind::Group);
+        // Invitations rarely carry a member count: zero isn't "a DM".
+        let invite = RoomFacts {
+            membership: Membership::Invited,
+            ..room(0)
         };
         assert_eq!(kind(&invite), Kind::Group);
     }

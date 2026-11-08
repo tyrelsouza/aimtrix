@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { watchValue } from "$lib/watch";
 
 /** Mirrors `Status` in src-tauri/src/matrix/sync.rs. */
 export type SyncStatus =
@@ -29,12 +28,5 @@ export function describe(status: SyncStatus): string {
  * Returns a function that stops listening.
  */
 export function watchSyncStatus(onChange: (status: SyncStatus) => void): () => void {
-  let stopped = false;
-  // Listen before asking, so a change in between isn't missed.
-  const unlisten = listen<SyncStatus>("sync:status", (e) => onChange(e.payload));
-  invoke<SyncStatus>("sync_status").then((s) => !stopped && onChange(s));
-  return () => {
-    stopped = true;
-    unlisten.then((f) => f());
-  };
+  return watchValue("sync:status", "sync_status", onChange);
 }

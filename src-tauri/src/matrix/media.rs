@@ -7,6 +7,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -18,10 +19,20 @@ use matrix_sdk::{
 use tauri::async_runtime::spawn;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// How long after a failed download to try again: long enough not to hammer
+/// a server that's down, short enough that icons come back after a blip
+/// (or after starting offline).
+const RETRY_AFTER: Duration = Duration::from_secs(60);
+
+enum Entry {
+    Downloading,
+    Ready(String),
+    Failed(Instant),
+}
+
 pub struct Icons {
     client: Client,
-    /// `None` while downloading, or after a download failed.
-    cache: Mutex<HashMap<OwnedMxcUri, Option<String>>>,
+    cache: Mutex<HashMap<OwnedMxcUri, Entry>>,
     /// Told when a download finishes, so the list can be rebuilt.
     ready: UnboundedSender<()>,
 }
@@ -36,23 +47,32 @@ impl Icons {
     }
 
     /// The icon for `mxc` as a `data:` URL, or `None` if it isn't ready.
-    /// The first call starts the download.
+    /// The first call starts the download; a failed one is tried again
+    /// after [`RETRY_AFTER`], by a later call.
     pub fn get(self: &Arc<Self>, mxc: &OwnedMxcUri) -> Option<String> {
         let mut cache = self.cache.lock().unwrap();
-        if let Some(icon) = cache.get(mxc) {
-            return icon.clone();
+        match cache.get(mxc) {
+            Some(Entry::Ready(icon)) => return Some(icon.clone()),
+            Some(Entry::Downloading) => return None,
+            Some(Entry::Failed(at)) if at.elapsed() < RETRY_AFTER => return None,
+            Some(Entry::Failed(_)) | None => {}
         }
-        cache.insert(mxc.clone(), None);
+        cache.insert(mxc.clone(), Entry::Downloading);
 
         let icons = self.clone();
         let mxc = mxc.clone();
         spawn(async move {
-            match icons.fetch(&mxc).await {
-                Ok(icon) => {
-                    icons.cache.lock().unwrap().insert(mxc, Some(icon));
-                    let _ = icons.ready.send(());
+            let entry = match icons.fetch(&mxc).await {
+                Ok(icon) => Entry::Ready(icon),
+                Err(e) => {
+                    eprintln!("Couldn't fetch buddy icon {mxc}: {e}");
+                    Entry::Failed(Instant::now())
                 }
-                Err(e) => eprintln!("Couldn't fetch buddy icon {mxc}: {e}"),
+            };
+            let ready = matches!(entry, Entry::Ready(_));
+            icons.cache.lock().unwrap().insert(mxc, entry);
+            if ready {
+                let _ = icons.ready.send(());
             }
         });
         None

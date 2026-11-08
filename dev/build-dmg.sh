@@ -16,11 +16,13 @@ VERSION="${VERSION:-$(node dev/set-version.mjs)}"
 echo "Building AIMtrix $VERSION for macOS"
 
 rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
+# Earlier builds' .dmg files, each named for its version, would be copied too.
+rm -rf src-tauri/target/universal-apple-darwin/release/bundle/dmg
 [ -d node_modules ] || npm ci --no-audit --no-fund
 # CI=true skips styling the .dmg's Finder window, which needs Finder
 # automation permission (and a desktop session).
 CI=true npm run tauri build -- --target universal-apple-darwin --bundles dmg \
-  --config "{\"version\":\"$VERSION\"}"
+  --config "{\"version\":\"$VERSION\"}" -- --locked
 
 mkdir -p dist
 rm -f dist/*.dmg

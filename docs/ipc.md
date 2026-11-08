@@ -4,7 +4,7 @@ Windows talk to the Rust core in two ways:
 - **Commands:** `invoke("name", { args })` from `@tauri-apps/api/core` calls a `#[tauri::command]` in `src-tauri/src/commands.rs` and returns a promise. Errors reject with a user-readable string.
 - **Events:** `listen("name", handler)` from `@tauri-apps/api/event` receives what Rust sends with `app.emit` (every window) or `app.emit_to(label, …)` (one window).
 
-Argument names are snake_case in Rust and camelCase in JS (`room_id` → `roomId`). Payload shapes follow serde: structs camelCase, enum values kebab-case. The TypeScript mirrors are in `src/lib/*.ts`.
+Argument names are snake_case in Rust and camelCase in JS (`room_id` → `roomId`). Payload shapes follow serde: structs camelCase, enum values kebab-case (except `Diff`'s `op`, which is camelCase: `pushFront`). The TypeScript mirrors are in `src/lib/*.ts`.
 
 `<key>` in event names is the room key (`windows::room_key`, the hash in the window's `room-<key>` label). Room windows get it from `roomKey()` in `src/lib/timeline.ts`.
 
@@ -15,10 +15,10 @@ Argument names are snake_case in Rust and camelCase in JS (`room_id` → `roomId
 | Command | Args | Returns | Used by |
 |---|---|---|---|
 | `sign_on_methods` | `homeserver` | `{ password: boolean, browser: boolean }` | Sign On, as you type the server |
-| `login` | `homeserver`, `username`, `password` | user ID. Also opens the Buddy List and closes Sign On. | Sign On |
-| `login_with_browser` | `homeserver` | user ID, once the browser comes back. Same window changes as `login`. | Sign On |
-| `cancel_browser_login` | | | Sign On |
-| `logout` | | Signs off, opens Sign On, closes the Buddy List. | Buddy List |
+| `login` | `homeserver`, `username`, `password` | Nothing; on success opens the Buddy List and closes Sign On. | Sign On |
+| `login_with_browser` | `homeserver` | Nothing, once the browser comes back. Same window changes as `login`. | Sign On |
+| `cancel_browser_login` | | | Sign On (closing Sign On does it too) |
+| `logout` | | Nothing. Signs off, opens Sign On, closes the Buddy List, even if forgetting the session fails. | Buddy List |
 | `whoami` | | user ID or `null` | Buddy List |
 
 ### Buddy List
@@ -28,7 +28,7 @@ Argument names are snake_case in Rust and camelCase in JS (`room_id` → `roomId
 | `sync_status` | | `SyncStatus` (later: `sync:status`) | Buddy List |
 | `buddy_list` | | `Buddy[]` (later: `buddylist:update`) | Buddy List, IM, Chat Room |
 | `accept_invite` / `decline_invite` | `roomId` | | Buddy List |
-| `open_room` | `roomId` | Opens or focuses the room's window. Fails for invitations and rooms not on the list. | Buddy List, Add Buddy |
+| `open_room` | `roomId` | Opens or focuses the room's window. Fails for invitations and rooms you aren't in; a joined room that hasn't reached the Buddy List yet (a DM Add Buddy just made) opens too. | Buddy List, Add Buddy |
 | `add_buddy` | `buddy` (Matrix ID, or a name on your server) | `{ roomId, existing }` | Add Buddy |
 | `block_buddy` | `userId`, `name` | `false` if you said no to the confirmation | IM |
 | `unblock_buddy` | `userId` | | IM |
@@ -41,7 +41,7 @@ These need the room's window to be open (its timeline watched), except `room_tim
 
 | Command | Args | Returns | Notes |
 |---|---|---|---|
-| `room_timeline` | `roomId` | `Line[]` | Starts or replaces the watch; changes arrive as `room:<key>:timeline_diff`, typing as `room:<key>:typing`. |
+| `room_timeline` | `roomId` | `{ watch: number, lines: Line[] }` | Starts or replaces the watch; changes arrive as `room:<key>:timeline_diff` with the same `watch`, typing as `room:<key>:typing`. Fails if the window closed meanwhile. |
 | `chat_room` | `roomId` | `{ members: Member[], topic: string \| null }` | Changes arrive as `room:<key>:members` and `room:<key>:topic`. |
 | `send_message` | `roomId`, `body`, `html` (or `null`) | | `html` is sanitized in Rust. The local echo arrives as a diff. |
 | `load_older` | `roomId` | `true` once the room's start is reached | Older lines arrive as diffs. |
@@ -113,7 +113,7 @@ Each one focuses the window if it's already open. Rust also opens windows by its
 | Event | Window | Payload |
 |---|---|---|
 | `verification:step` | `verify` | `Step`, tagged by `step`: `waiting`, `incoming {device}`, `starting {device, canStart}`, `compare {device, emojis: [{symbol, description}]}`, `confirmed {device}`, `done {device}`, `cancelled {reason}` |
-| `room:<key>:timeline_diff` | `room-<key>` | `Diff`, tagged by `op`: `append {values}`, `clear`, `pushFront {value}`, `pushBack {value}`, `popFront`, `popBack`, `insert {index, value}`, `set {index, value}`, `remove {index}`, `truncate {length}`, `reset {values}` |
+| `room:<key>:timeline_diff` | `room-<key>` | `Diff` plus `watch` (the number `room_timeline` returned; ignore others, from a watch the window replaced), tagged by `op`: `append {values}`, `clear`, `pushFront {value}`, `pushBack {value}`, `popFront`, `popBack`, `insert {index, value}`, `set {index, value}`, `remove {index}`, `truncate {length}`, `reset {values}` |
 | `room:<key>:typing` | `room-<key>` | `string[]`: display names of who's typing (never you) |
 | `room:<key>:members` | `room-<key>` (Chat Room) | `Member[]`, the whole list sorted by name: `{ userId, name, own, icon }` |
 | `room:<key>:topic` | `room-<key>` (Chat Room) | `string \| null` |

@@ -29,6 +29,7 @@ src/
       Compose.svelte           the toolbar, message box and Send button
       status.ts                the conversation status bar text
       upload.ts                Send File: drops, pastes, progress
+    watch.ts                   watchValue: follow a value Rust keeps (listen, then ask)
     sync.ts buddylist.ts timeline.ts chatroom.ts presence.ts recovery.ts verify.ts preferences.ts
                                typed command and event wrappers, one per area
     compose.ts                 editor → Matrix HTML; formatting in received messages
@@ -58,29 +59,23 @@ Windows have no system decorations (`decorations(false)`), so every window draws
 
 ## The watch pattern
 
-Almost every `$lib` module has a `watch…(onChange)` function, and they all work the same way:
+Almost every `$lib` module has a `watch…(onChange)` function. Those that follow one whole value use `watchValue` from `$lib/watch.ts`:
 
 ```ts
 export function watchBuddyList(onChange: (buddies: Buddy[]) => void): () => void {
-  let stopped = false;
-  // Listen before asking, so a change in between isn't missed.
-  const unlisten = listen<Buddy[]>("buddylist:update", (e) => onChange(e.payload));
-  invoke<Buddy[]>("buddy_list").then((b) => !stopped && onChange(b));
-  return () => {
-    stopped = true;
-    unlisten.then((f) => f());
-  };
+  return watchValue("buddylist:update", "buddy_list", onChange);
 }
 ```
 
-1. Subscribe to the event first.
-2. Then ask for the current value with a command; Rust keeps the latest value of every app-wide event for this.
-3. Return a stop function, which is exactly what a Svelte `$effect` cleanup wants:
+`watchValue(event, command, onChange)`:
+1. Subscribes to the event, and waits until the subscription is in place.
+2. Then asks for the current value with the command; Rust keeps the latest value of every such event for this. If an event arrived meanwhile, the answer is dropped, since the event is newer.
+3. Returns a stop function, which is exactly what a Svelte `$effect` cleanup wants:
    ```ts
    $effect(() => watchBuddyList((b) => (buddies = b)));
    ```
 
-`watchTimeline` adds one refinement: diffs that arrive before the first `room_timeline` answer are queued and applied on top of it, since diffs are relative to the lines. `watchChatRoom` does the opposite: its events carry whole values, so an event that beats the first answer wins.
+`watchChatRoom` does the same for two events at once. `watchTimeline` is the exception: its events are diffs relative to the lines, so diffs that arrive before the first `room_timeline` answer are queued and applied on top of it. Each answer and diff carries a watch number, and only diffs with the answer's number are applied: after a reload, diffs from the watch it replaced are ignored.
 
 | Module | Watch function | Command, then event |
 |---|---|---|
@@ -94,13 +89,15 @@ export function watchBuddyList(onChange: (buddies: Buddy[]) => void): () => void
 | `chatroom.ts` | `watchChatRoom` | `chat_room`, `room:<key>:members` and `room:<key>:topic` |
 | `conversation/upload.ts` | `watchUpload`, `watchFileDrops` | `room:<key>:upload`; the webview's drag-and-drop event |
 
+New watches of one whole value should use `watchValue` rather than repeat the listen-then-ask steps.
+
 Room windows find their key with `roomKey()` in `timeline.ts`: the window's own label minus `room-`. They never compute the hash themselves.
 
 ## Types mirror Rust
 
 Every payload has a TypeScript type with a comment naming its Rust original, e.g. `/** Mirrors \`Buddy\` in src-tauri/src/matrix/rooms.rs. */`. Serde decides the shapes:
 - Structs are camelCase (`roomId`, `awayMessage`).
-- Enum values are kebab-case strings (`"before-sign-on"`, `"no-cross-signing"`).
+- Enum values are kebab-case strings (`"before-sign-on"`, `"no-cross-signing"`), except `Diff`'s `op`, which is camelCase (`pushFront`).
 - Tagged unions use a tag field: `Line` by `type`, `Diff` by `op`, `Step` by `step`, `Upload` and `SyncStatus` by `state`.
 
 When you change a Rust type that crosses IPC, change its mirror too. Nothing checks them against each other automatically.
@@ -129,7 +126,7 @@ A server picker (matrix.org, plus the local dev servers in dev builds, plus a cu
 
 Both read `?room=` and are built from the same two components:
 - **`Transcript.svelte`** (props: `roomId`, `unread`, and bindable `loading`, `saving`, `notice`, `error`) runs `watchTimeline` and renders each `Line`: names in your color or theirs, formatted HTML, images (thumbnails via `image_thumbnail`, loaded once each), files with Save (`save_attachment`), replies, "(edited)" and "(not sent)", deleted and undecryptable placeholders, membership and topic lines. It follows new messages unless you've scrolled up, keeps your place when older messages load above, loads more when you scroll to the top (`load_older`; `start` means there's no more), and marks the room read while the window has focus (`mark_read`, debounced). Conversation fonts follow Preferences (`applyFonts` sets `--font-conversation` and `--font-size-conversation`).
-- **`Compose.svelte`** (props: `roomId`, `disabled`, `error`, `uploading`, and snippets `beside` and `actions`) is a `contenteditable` editor with Bold, Italic, Underline and a color palette, plus Send File…. Enter sends; Shift+Enter or Alt+Enter starts a new line. `serialize()` from `compose.ts` turns the editor into `{ body, html }`, keeping only bold, italic, underline, color and line breaks, and `html` is `null` when nothing is formatted. Typing notices start when you type, renew while you keep typing, and stop when you send, clear or pause (`set_typing`). Pasted pictures go to `send_pasted` (raw bytes); where WebKitGTK withholds them, `paste_picture` has Rust read the clipboard.
+- **`Compose.svelte`** (props: `roomId`, `error`, `uploading`, and snippets `beside` and `actions`) is a `contenteditable` editor with Bold, Italic, Underline and a color palette, plus Send File…. Enter sends; Shift+Enter or Alt+Enter starts a new line. `serialize()` from `compose.ts` turns the editor into `{ body, html }`, keeping only bold, italic, underline, color and line breaks, and `html` is `null` when nothing is formatted. Typing notices start when you type, renew while you keep typing, and stop when you send, clear or pause (`set_typing`). Pasted pictures go to `send_pasted` (raw bytes); where WebKitGTK withholds them, `paste_picture` has Rust read the clipboard.
 
 The IM window adds the buddy's and your Buddy Icons (`room_icon`, `my_icon`), their away message, and Block/Unblock (`block_buddy` asks first, `unblock_buddy`). The Chat Room window adds the member list and topic (`watchChatRoom`). Both watch the Buddy List to keep the name and unread state current, show upload progress in the status bar (`statusText` in `conversation/status.ts`), accept dropped files (`watchFileDrops` → `send_files` with paths), and can cancel an upload (`cancel_upload`).
 

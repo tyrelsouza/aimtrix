@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { watchValue } from "$lib/watch";
 
 /** Mirrors `Preferences` in src-tauri/src/preferences.rs. */
 export type Preferences = {
@@ -57,14 +56,7 @@ export const FONT_SIZES: [FontSize, string, number][] = [
  * function that stops listening.
  */
 export function watchPreferences(onChange: (prefs: Preferences) => void): () => void {
-  let stopped = false;
-  // Listen before asking, so a change in between isn't missed.
-  const unlisten = listen<Preferences>("preferences:update", (e) => onChange(e.payload));
-  invoke<Preferences>("get_preferences").then((p) => !stopped && onChange(p));
-  return () => {
-    stopped = true;
-    unlisten.then((f) => f());
-  };
+  return watchValue("preferences:update", "get_preferences", onChange);
 }
 
 /** Show this window's conversation in the preferred font, via CSS variables. */

@@ -14,6 +14,12 @@ use tauri::{AppHandle, Manager};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // First, so a second launch stops before doing anything else: two
+        // copies would share one store and one device, which corrupts the
+        // encryption state. Launching again shows the running one instead.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::open(app.clone());
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(matrix::Session::default())
@@ -99,7 +105,7 @@ pub fn run() {
                 tauri::RunEvent::Reopen {
                     has_visible_windows: false,
                     ..
-                } => tray::open(app),
+                } => tray::open(app.clone()),
                 _ => {}
             }
             #[cfg(not(target_os = "macos"))]
@@ -108,22 +114,24 @@ pub fn run() {
 }
 
 /// Resume the saved session straight into the Buddy List, or show Sign On.
+/// If resuming fails, Sign On says why; the saved session is kept, since
+/// the cause may be temporary (a locked keyring, say), and it holds the keys
+/// to old encrypted messages. Signing on again replaces it.
 async fn startup(app: &AppHandle) -> tauri::Result<()> {
     let data_dir = app.path().app_data_dir()?;
     let resumed = match matrix::resume(&data_dir).await {
-        Ok(Some(client)) => session::begin(app, client).await.map(|()| true),
+        Ok(Some(account)) => session::begin(app, session::Start::Resumed(account))
+            .await
+            .map(|()| true),
         Ok(None) => Ok(false),
         Err(e) => Err(e),
     };
     match resumed {
         Ok(true) => windows::open_buddy_list(app),
-        Ok(false) => windows::open_sign_on(app, false),
+        Ok(false) => windows::open_sign_on(app, windows::SignOnNotice::None),
         Err(e) => {
-            eprintln!("Couldn't resume the saved session, signing on again: {e}");
-            if let Err(e) = matrix::forget(&data_dir).await {
-                eprintln!("{e}");
-            }
-            windows::open_sign_on(app, false)
+            eprintln!("Couldn't resume the saved session: {e}");
+            windows::open_sign_on(app, windows::SignOnNotice::ResumeFailed(e))
         }
     }
 }

@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { watchValue } from "$lib/watch";
 
 /** Mirrors `Own` in src-tauri/src/matrix/presence.rs. */
 export type OwnPresence = {
@@ -20,12 +19,5 @@ export const MAX_AWAY_MESSAGE = 1024;
  * function that stops listening.
  */
 export function watchOwnPresence(onChange: (own: OwnPresence) => void): () => void {
-  let stopped = false;
-  // Listen before asking, so a change in between isn't missed.
-  const unlisten = listen<OwnPresence>("presence:update", (e) => onChange(e.payload));
-  invoke<OwnPresence>("own_presence").then((p) => !stopped && onChange(p));
-  return () => {
-    stopped = true;
-    unlisten.then((f) => f());
-  };
+  return watchValue("presence:update", "own_presence", onChange);
 }

@@ -53,7 +53,7 @@ cargo test --manifest-path src-tauri/Cargo.toml            # Rust unit tests: no
 mise run check                                             # all three
 ```
 
-**Unit tests** sit next to the code (`#[cfg(test)] mod tests`). They cover the pure rules: room classification (`rooms.rs`), timeline line mapping (`timeline.rs`), HTML sanitizing (`html.rs`), auto-reply decisions (`auto_reply.rs`), keyring formats (`keyring.rs`), preferences validation, tray icon drawing, window labels and sizes, upload preparation, and the sign-on refusal against a fake server.
+**Unit tests** sit next to the code (`#[cfg(test)] mod tests`). They cover the pure rules: room classification (`rooms.rs`), timeline line mapping (`timeline.rs`), HTML sanitizing (`html.rs`), auto-reply decisions (`auto_reply.rs`), keyring formats (`keyring.rs`), preferences validation, tray icon drawing, window labels, routes and the navigation guard, the OAuth page check, file names for saving, upload preparation (including turned photos), and the sign-on refusal against a fake server.
 
 **Server tests** are `#[ignore = "needs the dev homeserver"]` and run against the dev servers:
 
@@ -107,9 +107,9 @@ Until AIMtrix goes public, builds are numbered `0.0.1-<seconds since midnight UT
 
 ## Releases
 
-`mise run release` (`dev/release.sh`) refuses if there are uncommitted changes or HEAD isn't pushed, then tags HEAD `v<version>` and pushes the tag. `.github/workflows/release.yml` then:
-1. **`release`**: creates a draft GitHub release with notes.
-2. **`linux`**: builds the `.deb` and `.AppImage` on Ubuntu 22.04, adds the bundled-library notices, and attaches them.
+`mise run release` (`dev/release.sh`) refuses unless you're on `main`, with no uncommitted changes and HEAD equal to `origin/main` (CI checks only `main`), then tags HEAD `v<version>` and pushes the tag. `.github/workflows/release.yml` then:
+1. **`release`**: checks the tag is a valid version on a commit in `main`, and creates a draft GitHub release with notes (re-runs keep the existing draft).
+2. **`linux`**: builds the `.deb` and `.AppImage` on Ubuntu 22.04 with `--locked` (exactly the crates the notices list), adds the bundled-library notices, and attaches them (`--clobber`, so re-runs replace them).
 3. **`macos`**: builds the `.dmg` and attaches it.
 
 You review the draft on GitHub and publish it.

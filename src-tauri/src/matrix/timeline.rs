@@ -12,7 +12,7 @@ use matrix_sdk::{
     Client, Room, RoomState,
     media::{MediaFormat, MediaRequestParameters, MediaThumbnailSettings},
     ruma::{
-        EventId, OwnedEventId, OwnedUserId, RoomId, UserId,
+        EventId, OwnedEventId, OwnedUserId, RoomId, UInt, UserId,
         api::client::receipt::create_receipt::v3::ReceiptType,
         events::{
             StateEventContentChange,
@@ -220,6 +220,9 @@ const THUMBNAIL_HEIGHT: u32 = 360;
 /// images, which the server can't shrink): 10 MB.
 const MAX_FULL_IMAGE: u64 = 10_000_000;
 
+/// Biggest thumbnail the sender made (encrypted images) that's shown: 2 MB.
+const MAX_SENT_THUMBNAIL: u64 = 2_000_000;
+
 /// A change to the lines, mirroring [`VectorDiff`].
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
@@ -375,28 +378,41 @@ impl Watching {
             return Err("That message isn't an image.".to_owned());
         };
         let info = image.info.as_deref();
-        let (source, format) = match info.and_then(|i| i.thumbnail_source.clone()) {
-            Some(thumbnail) => (thumbnail, MediaFormat::File),
-            None => match &image.source {
-                // The server shrinks it.
-                MediaSource::Plain(_) => (
-                    image.source.clone(),
-                    MediaFormat::Thumbnail(MediaThumbnailSettings::new(
-                        THUMBNAIL_WIDTH.into(),
-                        THUMBNAIL_HEIGHT.into(),
-                    )),
-                ),
-                // The server can't see inside, so it's the whole image.
-                MediaSource::Encrypted(_) => {
-                    if info
-                        .and_then(|i| i.size)
-                        .is_some_and(|s| u64::from(s) > MAX_FULL_IMAGE)
-                    {
-                        return Err("The image is too big to preview.".to_owned());
+        // The SDK downloads media whole, so only fetch what's known to be
+        // small: anyone in the room picks these files, and a huge one would
+        // fill memory just by opening the window.
+        let (source, format, max) = match &image.source {
+            // Our own server shrinks it, and keeps thumbnails small; the
+            // sender's thumbnail file could be any size.
+            MediaSource::Plain(_) => (
+                image.source.clone(),
+                MediaFormat::Thumbnail(MediaThumbnailSettings::new(
+                    THUMBNAIL_WIDTH.into(),
+                    THUMBNAIL_HEIGHT.into(),
+                )),
+                MAX_SENT_THUMBNAIL,
+            ),
+            // The server can't see inside: use the sender's thumbnail, or the
+            // whole image, whichever the sender says is small enough. Without
+            // a size, assume it isn't.
+            MediaSource::Encrypted(_) => {
+                let declared = |size: Option<UInt>, max: u64| {
+                    size.map(u64::from).is_some_and(|size| size <= max)
+                };
+                let thumbnail = info.and_then(|i| {
+                    let size = i.thumbnail_info.as_ref().and_then(|t| t.size);
+                    i.thumbnail_source
+                        .clone()
+                        .filter(|_| declared(size, MAX_SENT_THUMBNAIL))
+                });
+                match thumbnail {
+                    Some(thumbnail) => (thumbnail, MediaFormat::File, MAX_SENT_THUMBNAIL),
+                    None if declared(info.and_then(|i| i.size), MAX_FULL_IMAGE) => {
+                        (image.source.clone(), MediaFormat::File, MAX_FULL_IMAGE)
                     }
-                    (image.source.clone(), MediaFormat::File)
+                    None => return Err("The image is too big to preview.".to_owned()),
                 }
-            },
+            }
         };
         let bytes = self
             .timeline
@@ -406,6 +422,10 @@ impl Watching {
             .get_media_content(&MediaRequestParameters { source, format }, true)
             .await
             .map_err(|e| format!("Couldn't load the image: {e}"))?;
+        // The sender's size may be a lie; don't pass a big file on.
+        if bytes.len() as u64 > max {
+            return Err("The image is too big to preview.".to_owned());
+        }
         Ok(media::data_url(&bytes))
     }
 
@@ -532,6 +552,14 @@ impl Watching {
             .await
             .map(|_| ())
             .map_err(|e| format!("Couldn't send the message: {e}"))
+    }
+}
+
+impl Watching {
+    /// Stop sending diffs now, even while something still holds this
+    /// watch (a file being sent, say).
+    pub fn stop(&self) {
+        self.task.abort();
     }
 }
 
@@ -796,7 +824,7 @@ fn preview(content: &TimelineItemContent) -> String {
         Some(MsgLikeKind::UnableToDecrypt(_)) => "an encrypted message".to_owned(),
         _ => "a message".to_owned(),
     };
-    shorten(&text.replace('\n', " "), PREVIEW_LENGTH)
+    shorten(&text.replace(['\r', '\n'], " "), PREVIEW_LENGTH)
 }
 
 /// `text` cut to `max` characters, with "…" if it was longer.
@@ -809,12 +837,30 @@ fn shorten(text: &str, max: usize) -> String {
 
 /// The last part of a sender-chosen file name, so a name like `../x` can't
 /// pick the folder it's saved in.
+///
+/// Also drops control characters and the invisible marks that reorder text
+/// (`invoice\u{202e}fdp.exe` shows as "invoiceexe.pdf"), and characters and
+/// trailing dots Windows doesn't allow, so the name in the Save dialog is
+/// what you'll get.
 fn safe_file_name(name: &str) -> String {
+    let bidi = |c: char| matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
+    let cleaned: String = name
+        .chars()
+        .filter(|&c| !c.is_control() && !bidi(c))
+        .map(|c| {
+            if matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
     // Senders on other systems may use either separator.
-    name.rsplit(['/', '\\'])
+    cleaned
+        .rsplit(['/', '\\'])
         .next()
-        .map(str::trim)
-        .filter(|n| !n.is_empty() && *n != "." && *n != "..")
+        .map(|n| n.trim().trim_end_matches(['.', ' ']))
+        .filter(|n| !n.is_empty())
         .unwrap_or("attachment")
         .to_owned()
 }
@@ -956,6 +1002,10 @@ mod tests {
         assert_eq!(safe_file_name(".."), "attachment");
         assert_eq!(safe_file_name("dir/"), "attachment");
         assert_eq!(safe_file_name(""), "attachment");
+        assert_eq!(safe_file_name("invoice\u{202e}fdp.exe"), "invoicefdp.exe");
+        assert_eq!(safe_file_name("a\u{0}b\nc.txt"), "abc.txt");
+        assert_eq!(safe_file_name("notes.txt:hidden"), "notes.txt_hidden");
+        assert_eq!(safe_file_name("report. . "), "report");
     }
 
     #[test]

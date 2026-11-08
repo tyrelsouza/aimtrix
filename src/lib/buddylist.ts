@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { watchValue } from "$lib/watch";
 
 /** Mirrors `Buddy` in src-tauri/src/matrix/rooms.rs. */
 export type Buddy = {
@@ -51,11 +50,13 @@ export const SECTIONS: [Section, string][] = [
 ];
 
 /**
- * The groups to show: Online and Offline when the server has presence,
+ * The groups to show: Online and Offline when the server has presence
+ * (`serverHasPresence`, from `own_presence`),
  * Buddies when it doesn't, and Invitations only when there are some.
  */
-export function visibleSections(buddies: Buddy[]): [Section, string][] {
-  const presence = buddies.some((b) => b.presence !== null);
+export function visibleSections(buddies: Buddy[], serverHasPresence: boolean | null): [Section, string][] {
+  // Until AIMtrix knows (null), go by whether any buddy has a presence.
+  const presence = serverHasPresence ?? buddies.some((b) => b.presence !== null);
   const hidden = new Set<Section>(presence ? ["buddies"] : ["online", "offline"]);
   if (!buddies.some((b) => b.section === "invitations")) hidden.add("invitations");
   return SECTIONS.filter(([section]) => !hidden.has(section));
@@ -66,12 +67,5 @@ export function visibleSections(buddies: Buddy[]): [Section, string][] {
  * Returns a function that stops listening.
  */
 export function watchBuddyList(onChange: (buddies: Buddy[]) => void): () => void {
-  let stopped = false;
-  // Listen before asking, so a change in between isn't missed.
-  const unlisten = listen<Buddy[]>("buddylist:update", (e) => onChange(e.payload));
-  invoke<Buddy[]>("buddy_list").then((b) => !stopped && onChange(b));
-  return () => {
-    stopped = true;
-    unlisten.then((f) => f());
-  };
+  return watchValue("buddylist:update", "buddy_list", onChange);
 }

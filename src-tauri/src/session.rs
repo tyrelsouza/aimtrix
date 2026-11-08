@@ -4,7 +4,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use matrix_sdk::{
@@ -42,8 +42,62 @@ pub const PRESENCE_EVENT: &str = "presence:update";
 /// Event carrying the verification's new [`Step`] to the Verify window.
 pub const STEP_EVENT: &str = "verification:step";
 
-/// Start syncing `client` and make it the app's session.
-pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
+/// How a session to [`begin`] came about.
+pub enum Start {
+    /// Resumed from the saved session at launch.
+    Resumed(matrix::Account),
+    /// Just signed on; saved by [`begin`].
+    New(matrix::NewSession),
+}
+
+/// Make a session the app's session and start syncing it. A new sign-on is
+/// saved first. There's only ever one session: if there already is one (a
+/// slow sign-on finishing after another), the new one is ended instead.
+pub async fn begin(app: &AppHandle, start: Start) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let state = app.state::<Session>();
+    // Held throughout, so two sign-ons can't both get in.
+    let mut signed = state.signed.lock().await;
+    if signed.is_some() {
+        if let Start::New(new) = start {
+            new.discard().await;
+        }
+        return Err("You're already signed on.".to_owned());
+    }
+    let (account, new) = match start {
+        Start::Resumed(account) => (account, false),
+        Start::New(new) => {
+            if let Err(e) = new.save(&data_dir).await {
+                new.discard().await;
+                return Err(e);
+            }
+            (new.account, true)
+        }
+    };
+    match start_watching(app, account.client.clone()).await {
+        Ok(watching) => {
+            let user = account.client.user_id().map(ToString::to_string);
+            tray::update(app, |tray| tray.user = user);
+            *signed = Some(watching(account));
+            Ok(())
+        }
+        Err(e) => {
+            // A sign-on that can't sync isn't kept; a resumed session is,
+            // to try again next launch.
+            if new && let Err(e) = matrix::sign_off(account).await {
+                eprintln!("{e}");
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Start syncing `client` and everything that follows it. Returns how to
+/// make the [`Signed`] once the caller has the account.
+async fn start_watching(
+    app: &AppHandle,
+    client: Client,
+) -> Result<impl FnOnce(matrix::Account) -> Signed, String> {
     let sync = sync::start(&client, {
         let app = app.clone();
         move |status| on_status(&app, status)
@@ -77,9 +131,10 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
     let verification_requests = verify::on_requests(&client, {
         let app = app.clone();
         move |request| {
+            let id = new_verification(&app);
             let flow = Flow::incoming(request, {
                 let app = app.clone();
-                move |step| on_step(&app, step)
+                move |step| on_step(&app, id, step)
             });
             start_verification(&app, flow);
         }
@@ -88,10 +143,9 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
         let app = app.clone();
         move || app.state::<preferences::Store>().get().auto_reply
     });
-    let user = client.user_id().map(ToString::to_string);
-    tray::update(app, |tray| tray.user = user);
-    *app.state::<Session>().signed.lock().await = Some(Signed {
-        client,
+    Ok(move |account: matrix::Account| Signed {
+        client: account.client,
+        store: account.store,
         sync,
         buddy_list,
         presence,
@@ -100,12 +154,11 @@ pub async fn begin(app: &AppHandle, client: Client) -> Result<(), String> {
         trust,
         verification_requests,
         auto_reply,
-    });
-    Ok(())
+    })
 }
 
-/// Stop syncing and hand back the client, if signed on.
-pub async fn end(app: &AppHandle) -> Option<Client> {
+/// Stop syncing and hand back the account, if signed on.
+pub async fn end(app: &AppHandle) -> Option<matrix::Account> {
     let signed = app.state::<Session>().signed.lock().await.take()?;
     signed.buddy_list.abort();
     signed.presence_events.abort();
@@ -120,6 +173,7 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
     *state.recovery.lock().unwrap() = Recovery::Unknown;
     *state.trust.lock().unwrap() = Trust::Unknown;
     *state.verification.lock().unwrap() = None;
+    *state.verification_id.lock().unwrap() = 0;
     *state.verification_step.lock().unwrap() = None;
     app.state::<Session>().buddies.lock().unwrap().clear();
     tray::update(app, |tray| *tray = tray::State::default());
@@ -140,8 +194,31 @@ pub async fn end(app: &AppHandle) -> Option<Client> {
             let _ = window.close();
         }
     }
-    Some(signed.client)
+    Some(matrix::Account {
+        client: signed.client,
+        store: signed.store,
+    })
 }
+
+/// A room's conversation as its window first gets it.
+#[derive(Serialize)]
+pub struct Conversation {
+    /// Which watch this is. Its diffs carry the same number, so a window
+    /// can tell them from those of a watch it replaced (after a reload).
+    watch: u64,
+    lines: Vec<Line>,
+}
+
+/// One change to a window's lines, from watch `watch`.
+#[derive(Serialize)]
+struct WatchedDiff {
+    watch: u64,
+    #[serde(flatten)]
+    diff: timeline::Diff,
+}
+
+/// Numbers each timeline watch.
+static WATCHES: AtomicU64 = AtomicU64::new(1);
 
 /// Follow a room's conversation for its window, replacing any earlier
 /// watch (e.g. after a reload). Returns the current lines; changes go to
@@ -151,24 +228,37 @@ pub async fn watch_timeline(
     app: &AppHandle,
     client: &Client,
     room_id: &str,
-) -> Result<Vec<Line>, String> {
+) -> Result<Conversation, String> {
     let key = windows::room_key(room_id);
     let event = format!("room:{key}:timeline_diff");
     let typing_event = format!("room:{key}:typing");
     let label = format!("{}{key}", windows::ROOM_LABEL_PREFIX);
+    let watch = WATCHES.fetch_add(1, Ordering::Relaxed);
+    // An earlier watch (the window reloaded) stops first, so its diffs
+    // don't mix with this one's.
+    if let Some(old) = app
+        .state::<Session>()
+        .timelines
+        .lock()
+        .unwrap()
+        .remove(room_id)
+    {
+        old.stop();
+    }
     let (lines, watching) = timeline::watch(
         client,
         room_id,
         {
             let (app, label) = (app.clone(), label.clone());
             move |diff| {
+                let diff = WatchedDiff { watch, diff };
                 if let Err(e) = app.emit_to(&label, &event, &diff) {
                     eprintln!("Couldn't send a timeline change to its window: {e}");
                 }
             }
         },
         {
-            let app = app.clone();
+            let (app, label) = (app.clone(), label.clone());
             move |names| {
                 if let Err(e) = app.emit_to(&label, &typing_event, &names) {
                     eprintln!("Couldn't send who's typing to its window: {e}");
@@ -177,14 +267,23 @@ pub async fn watch_timeline(
         },
     )
     .await?;
-    // Replacing an earlier watch drops it, which stops it.
-    app.state::<Session>()
+    let replaced = app
+        .state::<Session>()
         .timelines
         .lock()
         .unwrap()
         .insert(room_id.to_owned(), Arc::new(watching));
+    if let Some(old) = replaced {
+        old.stop();
+    }
+    // The window may have closed while this was starting: then nothing will
+    // remove the watch, so don't keep it.
+    if app.get_webview_window(&label).is_none() {
+        unwatch_timeline(app, room_id);
+        return Err("That conversation isn't open.".to_owned());
+    }
     subscribe_open_rooms(app).await;
-    Ok(lines)
+    Ok(Conversation { watch, lines })
 }
 
 /// Follow who's in a room and its topic for its Chat Room window,
@@ -226,6 +325,16 @@ pub async fn watch_chat_room(
         .lock()
         .unwrap()
         .insert(room_id.to_owned(), watching);
+    // As for the timeline: a window that closed meanwhile won't remove it.
+    let label = format!("{}{key}", windows::ROOM_LABEL_PREFIX);
+    if app.get_webview_window(&label).is_none() {
+        app.state::<Session>()
+            .members
+            .lock()
+            .unwrap()
+            .remove(room_id);
+        return Err("That conversation isn't open.".to_owned());
+    }
     Ok(first)
 }
 
@@ -241,7 +350,8 @@ pub fn unwatch_timeline(app: &AppHandle, room_id: &str) {
     {
         upload.abort();
     }
-    app.state::<Session>()
+    let watching = app
+        .state::<Session>()
         .timelines
         .lock()
         .unwrap()
@@ -252,13 +362,28 @@ pub fn unwatch_timeline(app: &AppHandle, room_id: &str) {
         .unwrap()
         .remove(room_id);
     let app = app.clone();
-    tauri::async_runtime::spawn(async move { subscribe_open_rooms(&app).await });
+    tauri::async_runtime::spawn(async move {
+        if let Some(watching) = watching {
+            watching.stop();
+            // Closing mid-sentence: don't leave others seeing "typing…"
+            // until the server times it out.
+            if let Err(e) = watching.set_typing(false).await {
+                eprintln!("Couldn't clear the typing notice: {e}");
+            }
+        }
+        subscribe_open_rooms(&app).await;
+    });
 }
 
 /// Have sync send rooms with an open window in full. The room list alone
 /// gets one event per room per sync, so a burst of messages leaves a gap
 /// and the open conversation jumps back to just the newest few.
 async fn subscribe_open_rooms(app: &AppHandle) {
+    // One at a time, each reading the open rooms once it runs: the server
+    // replaces the whole set, so an older set applied last would drop a
+    // room.
+    let state = app.state::<Session>();
+    let _one_at_a_time = state.subscribing.lock().await;
     let room_ids: Vec<OwnedRoomId> = app
         .state::<Session>()
         .timelines
@@ -329,8 +454,6 @@ pub async fn load_older(app: &AppHandle, room_id: &str) -> Result<bool, String> 
     watching(app, room_id)?.load_older().await
 }
 
-/// The watch of an open room window's conversation. Cloned out so the map
-/// isn't locked while it's used.
 /// How sending files from a room window is going, for its status bar.
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "state", rename_all = "kebab-case")]
@@ -369,6 +492,13 @@ pub async fn send_files(
     }
     // A server that doesn't say has no limit we can check.
     let max = watching.max_upload_size().await;
+    // Asking took a moment: if the window closed meanwhile, nothing would
+    // show the upload or be able to cancel it.
+    let key = windows::room_key(room_id);
+    let label = format!("{}{key}", windows::ROOM_LABEL_PREFIX);
+    if app.get_webview_window(&label).is_none() {
+        return Err("That conversation isn't open.".to_owned());
+    }
     for source in &sources {
         let (name, size) = (source.name()?, source.size()?);
         if let Some(max) = max
@@ -382,8 +512,6 @@ pub async fn send_files(
         }
     }
 
-    let key = windows::room_key(room_id);
-    let label = format!("{}{key}", windows::ROOM_LABEL_PREFIX);
     let event = format!("room:{key}:upload");
     let emit = {
         let app = app.clone();
@@ -426,8 +554,15 @@ pub async fn send_files(
                 };
             // Every whole percent is plenty for a status bar.
             let last = std::sync::atomic::AtomicUsize::new(usize::MAX);
+            // The SDK sends a picture's thumbnail alongside it and reports
+            // both through here; follow only the biggest, the file itself,
+            // or the bar jumps between them.
+            let biggest = std::sync::atomic::AtomicUsize::new(0);
             let result = watching
                 .send_file(prepared, |sent, total| {
+                    if total < biggest.fetch_max(total, Ordering::Relaxed) {
+                        return;
+                    }
                     let percent = sent * 100 / total.max(1);
                     if last.swap(percent, Ordering::Relaxed) != percent {
                         emit(sending(sent, total));
@@ -473,6 +608,17 @@ pub fn cancel_upload(app: &AppHandle, room_id: &str) {
     }
 }
 
+/// Whether a room's window is open and following its conversation.
+pub fn is_open(app: &AppHandle, room_id: &str) -> bool {
+    app.state::<Session>()
+        .timelines
+        .lock()
+        .unwrap()
+        .contains_key(room_id)
+}
+
+/// The watch of an open room window's conversation. Cloned out so the map
+/// isn't locked while it's used.
 fn watching(app: &AppHandle, room_id: &str) -> Result<Arc<timeline::Watching>, String> {
     app.state::<Session>()
         .timelines
@@ -515,32 +661,36 @@ fn on_buddies(app: &AppHandle, buddies: Vec<Buddy>) {
 /// The server rejected our token (e.g. signed out from another client): forget
 /// the session and go back to Sign On, explaining why.
 async fn signed_out(app: &AppHandle) {
-    end(app).await;
-    match app.path().app_data_dir() {
-        Ok(data_dir) => {
-            if let Err(e) = matrix::forget(&data_dir).await {
-                eprintln!("{e}");
-            }
-        }
-        Err(e) => eprintln!("Couldn't find the session store to forget: {e}"),
+    if let Some(account) = end(app).await
+        && let Err(e) = matrix::forget(account).await
+    {
+        eprintln!("{e}");
     }
-    if let Err(e) = windows::open_sign_on(app, true) {
+    if let Err(e) = windows::open_sign_on(app, windows::SignOnNotice::SignedOut) {
         eprintln!("Couldn't open Sign On: {e}");
     }
     windows::close_buddy_list(app);
 }
 
 /// Sign off (from the Buddy List or the tray): end the session on the
-/// server, forget it here, and go back to Sign On.
-pub async fn sign_off(app: &AppHandle) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    match end(app).await {
-        Some(client) => matrix::sign_off(&data_dir, client).await?,
-        None => matrix::forget(&data_dir).await?,
+/// server, forget it here, and go back to Sign On. Always ends up at Sign
+/// On: a sign-off that half fails is still a sign-off.
+pub async fn sign_off(app: &AppHandle) {
+    let forgotten = match end(app).await {
+        Some(account) => matrix::sign_off(account).await,
+        // Nothing running (resuming failed): forget what's saved.
+        None => match app.path().app_data_dir() {
+            Ok(data_dir) => matrix::forget_saved(&data_dir).await,
+            Err(e) => Err(e.to_string()),
+        },
+    };
+    if let Err(e) = forgotten {
+        eprintln!("Couldn't forget the session: {e}");
     }
-    windows::open_sign_on(app, false).map_err(|e| e.to_string())?;
+    if let Err(e) = windows::open_sign_on(app, windows::SignOnNotice::None) {
+        eprintln!("Couldn't open Sign On: {e}");
+    }
     windows::close_buddy_list(app);
-    Ok(())
 }
 
 /// Go away with `message`, or come back with `None`.
@@ -579,9 +729,29 @@ fn on_trust(app: &AppHandle, trust: Trust) {
     }
 }
 
-/// Share the verification's new step with the Verify window.
-pub fn on_step(app: &AppHandle, step: Step) {
-    *app.state::<Session>().verification_step.lock().unwrap() = Some(step.clone());
+/// Numbers each verification.
+static VERIFICATIONS: AtomicU64 = AtomicU64::new(1);
+
+/// Start numbering a new verification, which becomes the current one, and
+/// return its number for [`on_step`]. Call before creating its [`Flow`],
+/// which may report its first step straight away.
+pub fn new_verification(app: &AppHandle) -> u64 {
+    let id = VERIFICATIONS.fetch_add(1, Ordering::Relaxed);
+    let state = app.state::<Session>();
+    *state.verification_id.lock().unwrap() = id;
+    *state.verification_step.lock().unwrap() = None;
+    id
+}
+
+/// Share verification `id`'s new step with the Verify window. Steps from
+/// any verification but the current one (an earlier one still winding
+/// down, or one from before signing off) are dropped.
+pub fn on_step(app: &AppHandle, id: u64, step: Step) {
+    let state = app.state::<Session>();
+    if *state.verification_id.lock().unwrap() != id {
+        return;
+    }
+    *state.verification_step.lock().unwrap() = Some(step.clone());
     if let Err(e) = app.emit_to(windows::VERIFY_LABEL, STEP_EVENT, &step) {
         eprintln!("Couldn't send the verification step: {e}");
     }

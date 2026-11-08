@@ -16,7 +16,9 @@ IMAGE="${1:-ubuntu:24.04}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # The portable build from dev/build-package.sh if there is one, else the
 # host's own build.
-DEB="$(ls -t "$ROOT"/dist/*.deb "$ROOT"/src-tauri/target/release/bundle/deb/*.deb 2>/dev/null | head -1)"
+# (`ls` fails when one of the two has no .deb; that's fine.)
+DEB="$( (ls -t "$ROOT"/dist/*.deb "$ROOT"/src-tauri/target/release/bundle/deb/*.deb 2>/dev/null || true) | head -1)"
+[ -f "$DEB" ] || { echo "No .deb to test: run mise run package first." >&2; exit 1; }
 OUT="$ROOT/dev/package-test/${IMAGE//[:\/]/-}"
 mkdir -p "$OUT"
 rm -f "$OUT"/*.png "$OUT"/*.log

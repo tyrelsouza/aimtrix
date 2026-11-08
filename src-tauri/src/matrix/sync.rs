@@ -90,8 +90,15 @@ pub async fn start(
         let service = service.clone();
         let client = client.clone();
         async move {
+            // After an error, when to start again. A timer rather than a
+            // sleep here, so a revoked token is still noticed meanwhile.
+            let mut restart: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
             loop {
                 tokio::select! {
+                    () = async { restart.as_mut().unwrap().await }, if restart.is_some() => {
+                        restart = None;
+                        service.start().await;
+                    }
                     Some(state) = states.next() => match state {
                         State::Idle => on_status(Status::Connecting),
                         State::Running => on_status(Status::Online),
@@ -103,8 +110,7 @@ pub async fn start(
                                 None => e.to_string(),
                             };
                             on_status(Status::Error(message));
-                            tokio::time::sleep(RETRY_AFTER).await;
-                            service.start().await;
+                            restart = Some(Box::pin(tokio::time::sleep(RETRY_AFTER)));
                         }
                     },
                     Ok(change) = session_changes.recv() => match change {

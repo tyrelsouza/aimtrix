@@ -38,4 +38,5 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print(f"Fake old homeserver on http://localhost:{PORT}")
-    ThreadingHTTPServer(("", PORT), Handler).serve_forever()
+    # This computer only, like the dev containers' ports.
+    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

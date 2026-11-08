@@ -7,7 +7,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use image::{GenericImageView, ImageFormat, imageops::FilterType};
+use image::{
+    GenericImageView, ImageDecoder, ImageFormat, imageops::FilterType, metadata::Orientation,
+};
 use matrix_sdk::{
     attachment::{AttachmentInfo, BaseFileInfo, BaseImageInfo, Thumbnail},
     ruma::UInt,
@@ -33,17 +35,23 @@ pub struct Prepared {
 
 /// A file size for people: "512 bytes", "34 KB", "1.5 MB", "2.1 GB".
 pub fn describe_size(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    let b = bytes as f64;
-    if b < KB {
-        format!("{bytes} bytes")
-    } else if b < KB * KB {
-        format!("{:.0} KB", b / KB)
-    } else if b < KB * KB * KB {
-        format!("{:.1} MB", b / KB / KB)
-    } else {
-        format!("{:.1} GB", b / KB / KB / KB)
+    if bytes < 1024 {
+        return format!("{bytes} bytes");
     }
+    // KB as a whole number, MB and GB to one decimal. Each unit is used
+    // only while the rounded number stays under 1024, so 1,048,575 bytes is
+    // "1.0 MB", not "1024 KB". `formatSize` in src/lib/timeline.ts matches.
+    let units = [("KB", 0), ("MB", 1), ("GB", 1)];
+    let mut value = bytes as f64 / 1024.0;
+    for (i, (unit, decimals)) in units.iter().enumerate() {
+        let scale = 10f64.powi(*decimals);
+        let rounded = (value * scale).round() / scale;
+        if rounded < 1024.0 || i == units.len() - 1 {
+            return format!("{rounded:.prec$} {unit}", prec = *decimals as usize);
+        }
+        value /= 1024.0;
+    }
+    unreachable!("the last unit always returns")
 }
 
 /// The name a file is sent under.
@@ -165,8 +173,18 @@ fn image_info(bytes: &[u8], mime: &Mime) -> Option<(BaseImageInfo, Option<Thumbn
         return None;
     }
     let format = ImageFormat::from_mime_type(mime.essence_str())?;
-    let reader = image::ImageReader::with_format(Cursor::new(bytes), format);
-    let (width, height) = reader.into_dimensions().ok()?;
+    let mut decoder = image::ImageReader::with_format(Cursor::new(bytes), format)
+        .into_decoder()
+        .ok()?;
+    // Phones store photos as the sensor saw them, plus a note of which way
+    // up to show them. Everything shown uses the turned size.
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let (stored_width, stored_height) = decoder.dimensions();
+    let (width, height) = if turns_sideways(orientation) {
+        (stored_height, stored_width)
+    } else {
+        (stored_width, stored_height)
+    };
     let info = BaseImageInfo {
         width: Some(width.into()),
         height: Some(height.into()),
@@ -179,12 +197,25 @@ fn image_info(bytes: &[u8], mime: &Mime) -> Option<(BaseImageInfo, Option<Thumbn
     if small || too_big_to_decode || format == ImageFormat::Gif {
         return Some((info, None));
     }
-    Some((info, thumbnail(bytes, format)))
+    Some((info, thumbnail(bytes, format, orientation)))
 }
 
-/// A JPEG (or PNG, to keep transparency) that fits in [`THUMBNAIL_SIZE`].
-fn thumbnail(bytes: &[u8], format: ImageFormat) -> Option<Thumbnail> {
-    let image = image::load_from_memory_with_format(bytes, format).ok()?;
+/// Whether showing an image the right way up swaps its width and height.
+fn turns_sideways(orientation: Orientation) -> bool {
+    matches!(
+        orientation,
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    )
+}
+
+/// A JPEG (or PNG, to keep transparency) that fits in [`THUMBNAIL_SIZE`],
+/// the right way up. Thumbnails carry no orientation note of their own.
+fn thumbnail(bytes: &[u8], format: ImageFormat, orientation: Orientation) -> Option<Thumbnail> {
+    let mut image = image::load_from_memory_with_format(bytes, format).ok()?;
+    image.apply_orientation(orientation);
     let small = image.resize(THUMBNAIL_SIZE.0, THUMBNAIL_SIZE.1, FilterType::Triangle);
     let (width, height) = small.dimensions();
     let (out_format, content_type, small) = if small.color().has_alpha() {
@@ -222,6 +253,27 @@ mod tests {
         bytes
     }
 
+    /// A PNG stored `width`×`height` with an EXIF note to show it turned a
+    /// quarter clockwise, as phones save portrait photos.
+    fn turned_png(width: u32, height: u32) -> Vec<u8> {
+        use image::{ImageEncoder, codecs::png::PngEncoder};
+        // A big-endian TIFF header and one IFD entry: Orientation (0x0112),
+        // SHORT, 1 value, 6 = turn 90° clockwise to show.
+        let exif = [
+            b"MM\0\x2a\0\0\0\x08".as_slice(),
+            &[0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0],
+        ]
+        .concat();
+        let pixels = image::RgbImage::from_pixel(width, height, image::Rgb([30, 30, 200]));
+        let mut bytes = Vec::new();
+        let mut encoder = PngEncoder::new(&mut bytes);
+        encoder.set_exif_metadata(exif).unwrap();
+        encoder
+            .write_image(&pixels, width, height, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        bytes
+    }
+
     fn write(dir: &Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
         let path = dir.join(name);
         std::fs::write(&path, bytes).unwrap();
@@ -251,6 +303,9 @@ mod tests {
         assert_eq!(describe_size(34 * 1024), "34 KB");
         assert_eq!(describe_size(1536 * 1024), "1.5 MB");
         assert_eq!(describe_size(50 * 1024 * 1024), "50.0 MB");
+        assert_eq!(describe_size(1024 * 1024 - 1), "1.0 MB");
+        assert_eq!(describe_size(1024 * 1024 * 1024 - 1), "1.0 GB");
+        assert_eq!(describe_size(3 * 1024 * 1024 * 1024), "3.0 GB");
     }
 
     #[test]
@@ -274,6 +329,25 @@ mod tests {
             (800u32.into(), 450u32.into())
         );
         assert_eq!(thumbnail.content_type, mime::IMAGE_JPEG);
+    }
+
+    #[test]
+    fn turned_photos_get_their_shown_size_and_an_upright_thumbnail() {
+        let dir = tempfile::tempdir().unwrap();
+        let photo = write(dir.path(), "photo.png", &turned_png(1600, 900));
+        let prepared = prepare(Source::File(photo)).unwrap();
+        let Some(AttachmentInfo::Image(info)) = &prepared.config.info else {
+            panic!("not sent as an image");
+        };
+        assert_eq!(
+            (info.width, info.height),
+            (Some(900u32.into()), Some(1600u32.into()))
+        );
+        let thumbnail = prepared.config.thumbnail.expect("no thumbnail");
+        assert_eq!(
+            (thumbnail.width, thumbnail.height),
+            (338u32.into(), 600u32.into())
+        );
     }
 
     #[test]

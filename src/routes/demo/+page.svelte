@@ -85,9 +85,11 @@
     </div>
     <nav class="aim-menubar">
       <button class="aim-menubar__item">My AIMtrix</button>
-      <button class="aim-menubar__item">People</button>
+      <!-- .is-open: the menu whose dropdown is showing. -->
+      <button class="aim-menubar__item is-open">People</button>
       <button class="aim-menubar__item">Help</button>
     </nav>
+    <hr class="aim-sep" />
     <div class="aim-window__body">
       <div class="aim-panel">
         <details class="aim-group" open>

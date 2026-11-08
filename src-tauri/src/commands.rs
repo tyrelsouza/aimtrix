@@ -1,4 +1,8 @@
 //! The `#[tauri::command]` surface the windows call.
+//!
+//! Commands that open windows are `async`, even when they don't await:
+//! plain commands run on the main thread, and creating a window there can
+//! deadlock on Windows.
 
 use std::path::PathBuf;
 
@@ -16,7 +20,6 @@ use crate::{
         presence::Own,
         rooms::{self, Buddy, Section},
         sync::Status,
-        timeline::Line,
         upload,
         verify::{Flow, Step, Trust},
     },
@@ -28,7 +31,7 @@ use crate::{
 const ICON_PANE_SIZE: u32 = 96;
 
 /// Sign on, start syncing, open the Buddy List, and close the Sign On window
-/// that called this. Returns the user ID, e.g. `@alice:localhost`.
+/// that called this.
 #[tauri::command]
 pub async fn login(
     app: AppHandle,
@@ -36,18 +39,28 @@ pub async fn login(
     homeserver: String,
     username: String,
     password: String,
-) -> Result<String, String> {
+) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let client = matrix::sign_on(&data_dir, &homeserver, &username, &password).await?;
-    let user_id = client
-        .user_id()
-        .expect("logged in client has a user ID")
-        .to_string();
-    session::begin(&app, client).await?;
+    let new = matrix::sign_on(&data_dir, &homeserver, &username, &password).await?;
+    signed_on(&app, &window, new).await
+}
 
-    windows::open_buddy_list(&app).map_err(|e| e.to_string())?;
-    window.close().map_err(|e| e.to_string())?;
-    Ok(user_id)
+/// Make a new sign-on the session, then swap Sign On for the Buddy List.
+/// Once the session is running, a window that won't open or close isn't a
+/// reason to report the sign-on as failed.
+async fn signed_on(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    new: matrix::NewSession,
+) -> Result<(), String> {
+    session::begin(app, session::Start::New(new)).await?;
+    if let Err(e) = windows::open_buddy_list(app) {
+        eprintln!("Couldn't open the Buddy List: {e}");
+    }
+    if let Err(e) = window.close() {
+        eprintln!("Couldn't close Sign On: {e}");
+    }
+    Ok(())
 }
 
 /// How `homeserver` lets people sign on: password, browser, or both.
@@ -61,6 +74,15 @@ pub async fn sign_on_methods(homeserver: String) -> Result<matrix::Methods, Stri
 #[derive(Default)]
 pub struct BrowserSignOn(std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>);
 
+impl BrowserSignOn {
+    /// Stop waiting for the browser, if a sign-on is.
+    pub fn cancel(&self) {
+        if let Some(cancel) = self.0.lock().unwrap().take() {
+            let _ = cancel.send(());
+        }
+    }
+}
+
 /// Sign on in the browser (OAuth), then carry on like [`login`]. Waits until
 /// the browser comes back, [`cancel_browser_login`] or a timeout.
 #[tauri::command]
@@ -69,7 +91,7 @@ pub async fn login_with_browser(
     window: WebviewWindow,
     homeserver: String,
     pending: State<'_, BrowserSignOn>,
-) -> Result<String, String> {
+) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let (cancel, cancelled) = tokio::sync::oneshot::channel();
     // Starting again cancels a sign-on still waiting (its sender drops).
@@ -94,30 +116,19 @@ pub async fn login_with_browser(
             waiting.take();
         }
     }
-    let client = result?;
-    let user_id = client
-        .user_id()
-        .expect("signed-on client has a user ID")
-        .to_string();
-    session::begin(&app, client).await?;
-
-    windows::open_buddy_list(&app).map_err(|e| e.to_string())?;
-    window.close().map_err(|e| e.to_string())?;
-    Ok(user_id)
+    signed_on(&app, &window, result?).await
 }
 
 /// Stop waiting for the browser.
 #[tauri::command]
 pub fn cancel_browser_login(pending: State<'_, BrowserSignOn>) {
-    if let Some(cancel) = pending.0.lock().unwrap().take() {
-        let _ = cancel.send(());
-    }
+    pending.cancel();
 }
 
 /// Sign off, open Sign On, and close the Buddy List.
 #[tauri::command]
-pub async fn logout(app: AppHandle) -> Result<(), String> {
-    session::sign_off(&app).await
+pub async fn logout(app: AppHandle) {
+    session::sign_off(&app).await;
 }
 
 /// The signed-on user ID, or `None` before sign-on.
@@ -157,19 +168,37 @@ pub async fn decline_invite(session: State<'_, Session>, room_id: String) -> Res
 /// Open the IM or Chat Room window for a room on the Buddy List, or focus
 /// it if it's already open.
 #[tauri::command]
-pub fn open_room(
+pub async fn open_room(
     app: AppHandle,
     session: State<'_, Session>,
     room_id: String,
 ) -> Result<(), String> {
-    let (name, kind) = {
+    let listed = {
         let buddies = session.buddies.lock().unwrap();
         match buddies.iter().find(|b| b.room_id == room_id) {
             Some(b) if b.section == Section::Invitations => {
                 return Err("Accept the invitation to open this room.".to_owned());
             }
-            Some(b) => (b.name.clone(), b.kind),
-            None => return Err("That room isn't on your Buddy List.".to_owned()),
+            Some(b) => Some((b.name.clone(), b.kind)),
+            None => None,
+        }
+    };
+    let (name, kind) = match listed {
+        Some(listed) => listed,
+        // A DM Add Buddy just made reaches the Buddy List with a later
+        // sync; the client already has it.
+        None => {
+            let client = client(&session).await?;
+            let room = matrix_sdk::ruma::RoomId::parse(&room_id)
+                .ok()
+                .and_then(|id| client.get_room(&id))
+                .filter(|room| room.state() == matrix_sdk::RoomState::Joined)
+                .ok_or("That room isn't on your Buddy List.")?;
+            let name = match room.display_name().await {
+                Ok(name) => name.to_string(),
+                Err(_) => room_id.clone(),
+            };
+            (name, rooms::kind_of(&room).await)
         }
     };
     windows::open_room(&app, &room_id, &name, kind).map_err(|e| e.to_string())
@@ -183,7 +212,7 @@ pub async fn room_timeline(
     app: AppHandle,
     session: State<'_, Session>,
     room_id: String,
-) -> Result<Vec<Line>, String> {
+) -> Result<session::Conversation, String> {
     session::watch_timeline(&app, &client(&session).await?, &room_id).await
 }
 
@@ -395,6 +424,11 @@ async fn confirm_and_send_picture(
     mime: &str,
     bytes: Vec<u8>,
 ) -> Result<bool, String> {
+    // Before asking, not after: saying Send to a conversation that has
+    // closed would only end in an error.
+    if !session::is_open(app, room_id) {
+        return Err("That conversation isn't open.".to_owned());
+    }
     let room_name = app
         .state::<Session>()
         .buddies
@@ -461,7 +495,7 @@ pub async fn set_away(app: AppHandle, message: Option<String>) -> Result<(), Str
 
 /// Open Preferences, or focus it.
 #[tauri::command]
-pub fn open_preferences(app: AppHandle) -> Result<(), String> {
+pub async fn open_preferences(app: AppHandle) -> Result<(), String> {
     windows::open_preferences(&app).map_err(|e| e.to_string())
 }
 
@@ -473,7 +507,7 @@ pub fn tray_available(app: AppHandle) -> bool {
 
 /// Open About AIMtrix, or focus it.
 #[tauri::command]
-pub fn open_about(app: AppHandle) -> Result<(), String> {
+pub async fn open_about(app: AppHandle) -> Result<(), String> {
     windows::open_about(&app).map_err(|e| e.to_string())
 }
 
@@ -515,7 +549,7 @@ pub fn set_preferences(
 
 /// Open Add Buddy, or focus it.
 #[tauri::command]
-pub fn open_add_buddy(app: AppHandle) -> Result<(), String> {
+pub async fn open_add_buddy(app: AppHandle) -> Result<(), String> {
     windows::open_add_buddy(&app).map_err(|e| e.to_string())
 }
 
@@ -568,7 +602,7 @@ pub async fn unblock_buddy(session: State<'_, Session>, user_id: String) -> Resu
 
 /// Open Away Message, or focus it.
 #[tauri::command]
-pub fn open_away(app: AppHandle) -> Result<(), String> {
+pub async fn open_away(app: AppHandle) -> Result<(), String> {
     windows::open_away(&app).map_err(|e| e.to_string())
 }
 
@@ -581,7 +615,7 @@ pub fn recovery_status(session: State<'_, Session>) -> Recovery {
 
 /// Open Restore Messages, or focus it.
 #[tauri::command]
-pub fn open_recovery(app: AppHandle) -> Result<(), String> {
+pub async fn open_recovery(app: AppHandle) -> Result<(), String> {
     windows::open_recovery(&app).map_err(|e| e.to_string())
 }
 
@@ -602,9 +636,11 @@ pub fn device_trust(session: State<'_, Session>) -> Trust {
 /// Ask your other sessions to verify this one, and open Verify.
 #[tauri::command]
 pub async fn verify_device(app: AppHandle, session: State<'_, Session>) -> Result<(), String> {
-    let flow = Flow::request(&client(&session).await?, {
+    let client = client(&session).await?;
+    let id = session::new_verification(&app);
+    let flow = Flow::request(&client, {
         let app = app.clone();
-        move |step| session::on_step(&app, step)
+        move |step| session::on_step(&app, id, step)
     })
     .await?;
     session::start_verification(&app, flow);
@@ -650,7 +686,7 @@ fn verification(session: &Session) -> Result<std::sync::Arc<Flow>, String> {
 
 /// Open Set Up Recovery, or focus it.
 #[tauri::command]
-pub fn open_setup_recovery(app: AppHandle) -> Result<(), String> {
+pub async fn open_setup_recovery(app: AppHandle) -> Result<(), String> {
     windows::open_setup_recovery(&app).map_err(|e| e.to_string())
 }
 
