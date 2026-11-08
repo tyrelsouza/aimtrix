@@ -1,5 +1,6 @@
 <!-- Set Up Recovery: makes a recovery key for an account that has none, and shows it once. -->
 <script lang="ts">
+  import { shortcutKey } from "$lib/platform";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
@@ -36,12 +37,12 @@
       await navigator.clipboard.writeText(key);
       copied = true;
     } catch {
-      // No clipboard access: select it so Ctrl+C works.
+      // No clipboard access: select it so Ctrl+C (Cmd+C) works.
       const range = document.createRange();
       range.selectNodeContents(keyBox!);
       getSelection()?.removeAllRanges();
       getSelection()?.addRange(range);
-      error = "Couldn't copy. The key is selected: press Ctrl+C.";
+      error = `Couldn't copy. The key is selected: press ${shortcutKey}+C.`;
     }
   }
 

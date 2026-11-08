@@ -53,6 +53,14 @@ CI (`.github/workflows/ci.yml`) runs when something lands on `main`: the checks,
 
 `mise run package` builds a `.deb` and an `.AppImage` in an Ubuntu 22.04 container (into `dist/`), so they run on Ubuntu 22.04, Debian 12 and anything newer. `mise run test-package` installs the `.deb` on a clean container and checks that it signs on and resumes. `mise run release` tags the current commit and pushes the tag, and GitHub Actions attaches both packages to a draft release. Until AIMtrix goes public, builds are numbered `0.0.1-<seconds since midnight UTC>`.
 
+### Tiling window managers
+
+AIMtrix draws its own AIM-style title bars, so on i3 and other tiling window managers each window also gets the window manager's title bar. On i3, to drop it and float AIMtrix's windows like the small windows they are, add to your config:
+
+```
+for_window [class="(?i)aimtrix"] floating enable, border pixel 1
+```
+
 ## Development
 
 Develop and test against the local Matrix server in `dev/`, never real accounts. It needs Docker:

@@ -1,19 +1,35 @@
 //! Opening the app's windows. Each is focused instead of duplicated if it's
 //! already open.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
 
 use crate::{matrix::rooms::Kind, session};
+
+/// Added to each window's content size for what AIMtrix draws around it:
+/// the AIM-style title bar (18 px) and the 3 px window frame on each side
+/// (`TitleBar.svelte`, `.aim-frame`).
+const FRAME_WIDTH: f64 = 6.0;
+const FRAME_HEIGHT: f64 = 24.0;
+
+/// A window without the platform's title bar and frame: AIMtrix draws
+/// AIM-style ones on every platform (PLAN.md 8.4).
+fn aim_window(
+    app: &AppHandle,
+    label: impl Into<String>,
+    url: WebviewUrl,
+) -> WebviewWindowBuilder<'_, Wry, AppHandle> {
+    WebviewWindowBuilder::new(app, label, url).decorations(false)
+}
 
 /// The Buddy List is the `main` window.
 pub fn open_buddy_list(app: &AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
         return window.set_focus();
     }
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("/".into()))
+    aim_window(app, "main", WebviewUrl::App("/".into()))
         .title("Buddy List")
-        .inner_size(260.0, 540.0)
-        .min_inner_size(200.0, 300.0)
+        .inner_size(260.0 + FRAME_WIDTH, 540.0 + FRAME_HEIGHT)
+        .min_inner_size(200.0 + FRAME_WIDTH, 300.0 + FRAME_HEIGHT)
         .build()?;
     Ok(())
 }
@@ -28,9 +44,9 @@ pub fn open_sign_on(app: &AppHandle, signed_out: bool) -> tauri::Result<()> {
     } else {
         "/signon"
     };
-    WebviewWindowBuilder::new(app, "signon", WebviewUrl::App(url.into()))
+    aim_window(app, "signon", WebviewUrl::App(url.into()))
         .title("Sign On")
-        .inner_size(260.0, 350.0)
+        .inner_size(260.0 + FRAME_WIDTH, 350.0 + FRAME_HEIGHT)
         .resizable(false)
         .center()
         .build()?;
@@ -47,9 +63,9 @@ pub fn open_recovery(app: &AppHandle) -> tauri::Result<()> {
         window.unminimize()?;
         return window.set_focus();
     }
-    WebviewWindowBuilder::new(app, RECOVERY_LABEL, WebviewUrl::App("/recovery".into()))
+    aim_window(app, RECOVERY_LABEL, WebviewUrl::App("/recovery".into()))
         .title("Restore Messages")
-        .inner_size(340.0, 250.0)
+        .inner_size(340.0 + FRAME_WIDTH, 250.0 + FRAME_HEIGHT)
         .resizable(false)
         .center()
         .build()?;
@@ -66,9 +82,9 @@ pub fn open_about(app: &AppHandle) -> tauri::Result<()> {
         window.unminimize()?;
         return window.set_focus();
     }
-    WebviewWindowBuilder::new(app, ABOUT_LABEL, WebviewUrl::App("/about".into()))
+    aim_window(app, ABOUT_LABEL, WebviewUrl::App("/about".into()))
         .title("About AIMtrix")
-        .inner_size(300.0, 270.0)
+        .inner_size(300.0 + FRAME_WIDTH, 270.0 + FRAME_HEIGHT)
         .resizable(false)
         .center()
         .build()?;
@@ -81,13 +97,13 @@ pub fn open_preferences(app: &AppHandle) -> tauri::Result<()> {
         window.unminimize()?;
         return window.set_focus();
     }
-    WebviewWindowBuilder::new(
+    aim_window(
         app,
         PREFERENCES_LABEL,
         WebviewUrl::App("/preferences".into()),
     )
     .title("Preferences")
-    .inner_size(340.0, 330.0)
+    .inner_size(340.0 + FRAME_WIDTH, 330.0 + FRAME_HEIGHT)
     .resizable(false)
     .center()
     .build()?;
@@ -103,9 +119,9 @@ pub fn open_add_buddy(app: &AppHandle) -> tauri::Result<()> {
         window.unminimize()?;
         return window.set_focus();
     }
-    WebviewWindowBuilder::new(app, ADD_BUDDY_LABEL, WebviewUrl::App("/add-buddy".into()))
+    aim_window(app, ADD_BUDDY_LABEL, WebviewUrl::App("/add-buddy".into()))
         .title("Add Buddy")
-        .inner_size(300.0, 170.0)
+        .inner_size(300.0 + FRAME_WIDTH, 170.0 + FRAME_HEIGHT)
         .resizable(false)
         .center()
         .build()?;
@@ -121,9 +137,9 @@ pub fn open_away(app: &AppHandle) -> tauri::Result<()> {
         window.unminimize()?;
         return window.set_focus();
     }
-    WebviewWindowBuilder::new(app, AWAY_LABEL, WebviewUrl::App("/away".into()))
+    aim_window(app, AWAY_LABEL, WebviewUrl::App("/away".into()))
         .title("Away Message")
-        .inner_size(320.0, 260.0)
+        .inner_size(320.0 + FRAME_WIDTH, 260.0 + FRAME_HEIGHT)
         .resizable(false)
         .center()
         .build()?;
@@ -139,13 +155,13 @@ pub fn open_setup_recovery(app: &AppHandle) -> tauri::Result<()> {
         window.unminimize()?;
         return window.set_focus();
     }
-    WebviewWindowBuilder::new(
+    aim_window(
         app,
         SETUP_RECOVERY_LABEL,
         WebviewUrl::App("/setup-recovery".into()),
     )
     .title("Set Up Recovery")
-    .inner_size(360.0, 290.0)
+    .inner_size(360.0 + FRAME_WIDTH, 290.0 + FRAME_HEIGHT)
     .resizable(false)
     .center()
     .build()?;
@@ -161,9 +177,9 @@ pub fn open_verify(app: &AppHandle) -> tauri::Result<()> {
         window.unminimize()?;
         return window.set_focus();
     }
-    let window = WebviewWindowBuilder::new(app, VERIFY_LABEL, WebviewUrl::App("/verify".into()))
+    let window = aim_window(app, VERIFY_LABEL, WebviewUrl::App("/verify".into()))
         .title("Verify This Computer")
-        .inner_size(360.0, 280.0)
+        .inner_size(360.0 + FRAME_WIDTH, 280.0 + FRAME_HEIGHT)
         .resizable(false)
         .center()
         .build()?;
@@ -187,10 +203,13 @@ pub fn open_room(app: &AppHandle, room_id: &str, name: &str, kind: Kind) -> taur
     }
     let style = RoomWindow::for_kind(kind);
     let url = format!("{}?room={}", style.route, encode_query(room_id));
-    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+    let window = aim_window(app, label, WebviewUrl::App(url.into()))
         .title(style.title(name))
-        .inner_size(style.size.0, style.size.1)
-        .min_inner_size(style.min_size.0, style.min_size.1)
+        .inner_size(style.size.0 + FRAME_WIDTH, style.size.1 + FRAME_HEIGHT)
+        .min_inner_size(
+            style.min_size.0 + FRAME_WIDTH,
+            style.min_size.1 + FRAME_HEIGHT,
+        )
         .build()?;
     let (app, room_id) = (app.clone(), room_id.to_owned());
     window.on_window_event(move |event| {

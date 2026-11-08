@@ -26,6 +26,22 @@ export const FONT_FACES: [string, string][] = [
   ["Verdana", "Verdana"],
 ];
 
+/**
+ * Stand-ins for each font where it isn't installed (most Linux systems):
+ * look-alikes, so a serif pick stays serif. Liberation fonts match Arial,
+ * Times New Roman and Courier New letter for letter; Comic Neue is an
+ * open Comic Sans look-alike.
+ */
+const FALLBACKS: Record<string, string> = {
+  Arial: '"Liberation Sans", Helvetica, sans-serif',
+  "Comic Sans MS": '"Comic Neue", "Chalkboard SE", cursive',
+  "Courier New": '"Liberation Mono", Courier, monospace',
+  Georgia: '"DejaVu Serif", "Liberation Serif", serif',
+  "Times New Roman": '"Liberation Serif", Times, serif',
+  "Trebuchet MS": '"DejaVu Sans", "Liberation Sans", sans-serif',
+  Verdana: '"DejaVu Sans", "Liberation Sans", sans-serif',
+};
+
 /** Text sizes for conversations, with labels and sizes in px. */
 export const FONT_SIZES: [FontSize, string, number][] = [
   ["small", "Small", 11],
@@ -55,7 +71,8 @@ export function applyFonts(prefs: Preferences) {
   const size = FONT_SIZES.find(([s]) => s === prefs.fontSize)?.[2] ?? 12;
   root.setProperty("--font-size-conversation", `${size}px`);
   if (prefs.fontFace) {
-    root.setProperty("--font-conversation", `"${prefs.fontFace}", var(--font-ui)`);
+    const fallback = FALLBACKS[prefs.fontFace] ?? "var(--font-ui)";
+    root.setProperty("--font-conversation", `"${prefs.fontFace}", ${fallback}`);
   } else {
     root.removeProperty("--font-conversation");
   }
