@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Start a release: tag HEAD as v<next version> (dev/set-version.mjs) and
 # push the tag. GitHub Actions (.github/workflows/release.yml) then builds
-# the Linux packages and attaches them to a draft release to review and
-# publish on GitHub.
+# the Linux packages and the macOS .dmg and attaches them to a draft
+# release to review and publish on GitHub.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

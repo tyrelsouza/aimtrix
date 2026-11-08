@@ -639,12 +639,6 @@ pub async fn confirm_verification(
     verification(&session)?.confirm(matched).await
 }
 
-/// Stop the verification in progress, on both sides.
-#[tauri::command]
-pub async fn cancel_verification(session: State<'_, Session>) -> Result<(), String> {
-    verification(&session)?.cancel().await
-}
-
 fn verification(session: &Session) -> Result<std::sync::Arc<Flow>, String> {
     session
         .verification

@@ -1,6 +1,8 @@
 # AIMtrix
 
-A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md` for the full design, the AIM→Matrix mapping and the build phases.
+A Matrix client that looks and behaves like AOL Instant Messenger. See `PLAN.md` for the full design, the AIM→Matrix mapping and the build phases, and `docs/` for how the code is organized (backend, frontend, every command and event).
+
+When a change adds, removes or renames a command, event, window, module or dev task, update the matching page in `docs/` (`ipc.md`, `backend.md`, `frontend.md`, `development.md`).
 
 ## Workflow
 - Work through the `## Steps` checklist in `PLAN.md` one step at a time, in order. Don't start the next step unless asked.
