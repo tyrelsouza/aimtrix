@@ -47,11 +47,11 @@ npm run tauri dev    # run in development
 npm run tauri build  # build packages for this machine
 ```
 
-### Linux packages and releases
+### Packages and releases
 
 CI (`.github/workflows/ci.yml`) runs when something lands on `main`: the checks, unit tests and a release build on Linux, macOS and Windows, and the server tests against the dev homeservers on Linux.
 
-`mise run package` builds a `.deb` and an `.AppImage` in an Ubuntu 22.04 container (into `dist/`), so they run on Ubuntu 22.04, Debian 12 and anything newer. `mise run test-package` installs the `.deb` on a clean container and checks that it signs on and resumes. `mise run release` tags the current commit and pushes the tag, and GitHub Actions attaches both packages to a draft release. Until AIMtrix goes public, builds are numbered `0.0.1-<seconds since midnight UTC>`.
+`mise run package` builds a `.deb` and an `.AppImage` in an Ubuntu 22.04 container (into `dist/`), so they run on Ubuntu 22.04, Debian 12 and anything newer. `mise run test-package` installs the `.deb` on a clean container and checks that it signs on and resumes. On a Mac, `mise run package-mac` builds a `.dmg` that runs on Intel and Apple Silicon Macs. It isn't signed, so the first time, right-click AIMtrix in Applications and choose Open. `mise run release` tags the current commit and pushes the tag, and GitHub Actions attaches the Linux packages and the `.dmg` to a draft release. Until AIMtrix goes public, builds are numbered `0.0.1-<seconds since midnight UTC>`.
 
 ### Tiling window managers
 

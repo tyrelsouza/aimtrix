@@ -1,9 +1,10 @@
-# Builds the Linux packages for a version tag and attaches them to a draft
-# GitHub release. Start one with `mise run release`, which tags HEAD as
+# Builds the packages for a version tag and attaches them to a draft GitHub
+# release. Start one with `mise run release`, which tags HEAD as
 # v<version> and pushes the tag; then review the draft and publish it.
 #
-# Built on Ubuntu 22.04 so the packages run there, on Debian 12 and on
-# anything newer (see dev/build-package.sh, which does the same locally).
+# Linux is built on Ubuntu 22.04 so the packages run there, on Debian 12
+# and on anything newer (see dev/build-package.sh, which does the same
+# locally). macOS gets a universal, unsigned .dmg (dev/build-dmg.sh).
 name: Release
 
 on:
@@ -14,7 +15,33 @@ permissions:
   contents: write
 
 jobs:
+  # The draft release the builds below attach their packages to.
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create a draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > notes.md <<'EOF'
+          Test build, not for general use yet.
+
+          - `.deb`: Ubuntu 22.04+, Debian 12+ (`sudo apt install ./aimtrix_*.deb`)
+          - `.AppImage`: most other Linux distributions (`chmod +x` and run)
+          - `.dmg`: macOS, Intel and Apple Silicon. It isn't signed yet, so the
+            first time, right-click AIMtrix in Applications and choose Open.
+
+          On Linux, AIMtrix keeps your session in the system keyring, so it
+          needs one running (GNOME Keyring, KWallet or another Secret Service).
+
+          AIMtrix is MIT licensed. The `.licenses.txt` file lists the libraries
+          the AppImage bundles, with their licenses and where to get their source.
+          EOF
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --draft --prerelease --title "AIMtrix $GITHUB_REF_NAME" --notes-file notes.md
+
   linux:
+    needs: release
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -53,24 +80,43 @@ jobs:
       - name: Add bundled library licenses to the AppImage
         run: bash dev/appimage-notices.sh src-tauri/target/release/bundle/appimage
 
-      - name: Attach to a draft release
+      - name: Attach to the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cat > notes.md <<'EOF'
-          Test build, not for general use yet.
-
-          - `.deb`: Ubuntu 22.04+, Debian 12+ (`sudo apt install ./aimtrix_*.deb`)
-          - `.AppImage`: most other Linux distributions (`chmod +x` and run)
-
-          AIMtrix keeps your session in the system keyring, so it needs one
-          running (GNOME Keyring, KWallet or another Secret Service).
-
-          AIMtrix is MIT licensed. The `.licenses.txt` file lists the libraries
-          the AppImage bundles, with their licenses and where to get their source.
-          EOF
-          gh release create "$GITHUB_REF_NAME" --draft --prerelease \
-            --title "AIMtrix $GITHUB_REF_NAME" --notes-file notes.md \
+          gh release upload "$GITHUB_REF_NAME" \
             src-tauri/target/release/bundle/deb/aimtrix_*.deb \
             src-tauri/target/release/bundle/appimage/*.AppImage \
             src-tauri/target/release/bundle/appimage/*.licenses.txt
+
+  macos:
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Build the .dmg
+        env:
+          # The tag carries the version.
+          VERSION: ${{ github.ref_name }}
+        run: VERSION="${VERSION#v}" bash dev/build-dmg.sh
+
+      - name: Attach to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.dmg

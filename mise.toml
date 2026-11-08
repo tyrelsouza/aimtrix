@@ -24,6 +24,10 @@ run = "node dev/set-version.mjs"
 description = "Build the .deb and .AppImage in an Ubuntu 22.04 container, into dist/"
 run = "dev/build-package.sh"
 
+[tasks.package-mac]
+description = "On a Mac: build the universal, unsigned .dmg into dist/"
+run = "dev/build-dmg.sh"
+
 [tasks.test-package]
 description = "Install the newest .deb on a clean container and check it signs on and resumes"
 run = "dev/test-package.sh {{arg(name='image', default='ubuntu:24.04')}}"
