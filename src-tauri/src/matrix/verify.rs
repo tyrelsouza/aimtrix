@@ -51,6 +51,7 @@ pub enum Step {
 
 /// One of the seven emoji to compare.
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Emoji {
     pub symbol: String,
     pub description: String,

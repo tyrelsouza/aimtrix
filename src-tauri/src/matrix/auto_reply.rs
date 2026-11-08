@@ -13,7 +13,7 @@ use matrix_sdk::{
     Client, Room,
     event_handler::EventHandlerHandle,
     ruma::{
-        OwnedRoomId,
+        OwnedRoomId, RoomId,
         events::{
             AnySyncMessageLikeEvent, AnySyncTimelineEvent, SyncMessageLikeEvent,
             room::{
@@ -25,6 +25,8 @@ use matrix_sdk::{
         },
     },
 };
+
+use tokio::task::JoinSet;
 
 use super::{
     presence::Tracker,
@@ -68,6 +70,12 @@ impl Replied {
             .is_none()
     }
 
+    /// Whether `room` already got a reply in the time away that started
+    /// `since`.
+    pub fn has_replied(&self, since: SystemTime, room: &RoomId) -> bool {
+        self.away_since == Some(since) && self.rooms.contains(room)
+    }
+
     /// [`Replied::decide`], saying why not: `None` means reply (and it's
     /// recorded).
     pub fn skip_reason(
@@ -85,8 +93,8 @@ impl Replied {
             self.away_since = Some(since);
             self.rooms.clear();
         }
-        // The server's clock against ours; with both kept right by NTP,
-        // close enough. A message from just before we went away isn't new.
+        // The sender's server's clock against ours; with both kept right
+        // by NTP, close enough. A message from just before we went away isn't new.
         if !enabled {
             Some("auto-reply is off in Preferences")
         } else if message.from_us {
@@ -110,14 +118,23 @@ impl Replied {
 /// second or two.
 const DECRYPT_FOR: Duration = Duration::from_secs(60);
 
-/// The event handlers answering IMs; [`Watching::stop`] removes them.
-pub struct Watching(Vec<EventHandlerHandle>);
+/// Most messages waited on for their keys at once. More are skipped: a
+/// burst of unreadable messages shouldn't turn into a burst of requests.
+const MAX_WAITING: usize = 8;
+
+/// The event handlers answering IMs; [`Watching::stop`] removes them and
+/// stops any reply still being worked on.
+pub struct Watching {
+    handlers: Vec<EventHandlerHandle>,
+    replier: Arc<Replier>,
+}
 
 impl Watching {
     pub fn stop(self, client: &Client) {
-        for handler in self.0 {
+        for handler in self.handlers {
             client.remove_event_handler(handler);
         }
+        self.replier.tasks.lock().unwrap().abort_all();
     }
 }
 
@@ -126,26 +143,56 @@ struct Replier {
     presence: Arc<Tracker>,
     replied: Mutex<Replied>,
     enabled: Box<dyn Fn() -> bool + Send + Sync>,
+    /// Replies being worked on. The SDK waits for each event handler before
+    /// syncing on, so the handlers only start these and return.
+    tasks: Mutex<JoinSet<()>>,
 }
 
 impl Replier {
+    /// Run `work` in the background, unless `limit` tasks are already
+    /// running.
+    fn spawn(&self, limit: usize, work: impl Future<Output = ()> + Send + 'static) -> bool {
+        let mut tasks = self.tasks.lock().unwrap();
+        while tasks.try_join_next().is_some() {}
+        if tasks.len() >= limit {
+            return false;
+        }
+        tasks.spawn(work);
+        true
+    }
+
+    /// Whether `room` is an IM that auto-reply may answer: a DM by AIMtrix's
+    /// rules, and really just two people. A room in `m.direct` can grow, and
+    /// the away message shouldn't go to everyone in it.
+    async fn is_im(room: &Room) -> bool {
+        room.active_members_count() <= 2 && rooms::kind_of(room).await == Kind::Dm
+    }
+
     /// Answer `event` in `room` if it calls for it.
     async fn consider(&self, room: &Room, event: &OriginalSyncRoomMessageEvent) {
         let away = self.presence.away();
         let message = Incoming {
             from_us: room.own_user_id() == event.sender,
-            sent: UNIX_EPOCH + Duration::from_millis(event.origin_server_ts.0.into()),
+            // A timestamp too far off to be a time (Windows' clock can't
+            // reach it) is as good as old.
+            sent: UNIX_EPOCH
+                .checked_add(Duration::from_millis(event.origin_server_ts.0.into()))
+                .unwrap_or(UNIX_EPOCH),
             automatic_or_edit: matches!(event.content.msgtype, MessageType::Notice(_))
                 || matches!(event.content.relates_to, Some(Relation::Replacement(_))),
-            in_dm: rooms::kind_of(room).await == Kind::Dm,
+            in_dm: Self::is_im(room).await,
         };
         let room_id = room.room_id().to_owned();
-        let skip = self.replied.lock().unwrap().skip_reason(
-            (self.enabled)(),
-            away.as_ref().map(|(_, since)| *since),
-            &room_id,
-            &message,
-        );
+        let skip = if room.client().is_user_ignored(&event.sender).await {
+            Some("the sender is blocked")
+        } else {
+            self.replied.lock().unwrap().skip_reason(
+                (self.enabled)(),
+                away.as_ref().map(|(_, since)| *since),
+                &room_id,
+                &message,
+            )
+        };
         if let Some(reason) = skip {
             // Only IMs from others while it's on and we're away, so normal
             // use doesn't fill the log.
@@ -168,20 +215,34 @@ impl Replier {
     /// An encrypted message we couldn't read yet: if it might call for a
     /// reply, keep trying to decrypt it, then consider it.
     async fn consider_later(&self, room: &Room, event: &OriginalSyncRoomEncryptedEvent) {
-        if room.own_user_id() == event.sender || rooms::kind_of(room).await != Kind::Dm {
+        if room.own_user_id() == event.sender || !Self::is_im(room).await {
             return;
         }
-        if self.presence.away().is_none() || !(self.enabled)() {
+        let Some((_, since)) = self.presence.away() else {
+            return;
+        };
+        if !(self.enabled)()
+            || self
+                .replied
+                .lock()
+                .unwrap()
+                .has_replied(since, room.room_id())
+            || room.client().is_user_ignored(&event.sender).await
+        {
             return;
         }
         eprintln!(
             "Auto-reply: waiting for the key to a message in {}",
             room.room_id()
         );
+        // Asking decrypts with any key that has arrived since. Ask again
+        // after 1, 2, 4… seconds, so a key that never comes costs a handful
+        // of requests, not one a second.
         let deadline = tokio::time::Instant::now() + DECRYPT_FOR;
-        while tokio::time::Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            // Decrypts with any key that has arrived since.
+        let mut pause = Duration::from_secs(1);
+        while tokio::time::Instant::now() + pause <= deadline {
+            tokio::time::sleep(pause).await;
+            pause *= 2;
             let Ok(decrypted) = room.event(&event.event_id, None).await else {
                 continue;
             };
@@ -214,22 +275,39 @@ pub fn watch(
         presence,
         replied: Mutex::default(),
         enabled: Box::new(enabled),
+        tasks: Mutex::default(),
     });
     let readable = client.add_event_handler({
         let replier = replier.clone();
         move |event: OriginalSyncRoomMessageEvent, room: Room| {
-            let replier = replier.clone();
-            async move { replier.consider(&room, &event).await }
+            let worker = replier.clone();
+            replier.spawn(
+                usize::MAX,
+                async move { worker.consider(&room, &event).await },
+            );
+            async {}
         }
     });
     // Sync hands over messages it couldn't decrypt as `m.room.encrypted`,
     // and doesn't run handlers again once they're decrypted.
-    let unreadable =
-        client.add_event_handler(move |event: OriginalSyncRoomEncryptedEvent, room: Room| {
-            let replier = replier.clone();
-            async move { replier.consider_later(&room, &event).await }
-        });
-    Watching(vec![readable, unreadable])
+    let unreadable = client.add_event_handler({
+        let replier = replier.clone();
+        move |event: OriginalSyncRoomEncryptedEvent, room: Room| {
+            let worker = replier.clone();
+            let room_id = room.room_id().to_owned();
+            let waiting = replier.spawn(MAX_WAITING, async move {
+                worker.consider_later(&room, &event).await
+            });
+            if !waiting {
+                eprintln!("Auto-reply: too many unreadable messages, skipping one in {room_id}");
+            }
+            async {}
+        }
+    });
+    Watching {
+        handlers: vec![readable, unreadable],
+        replier,
+    }
 }
 
 #[cfg(test)]

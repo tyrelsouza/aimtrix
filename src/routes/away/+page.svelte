@@ -16,6 +16,12 @@
   let error = $state("");
   let filled = false;
   let autoReply = $state(false);
+  /**
+   * Characters as Rust counts them (code points), after trimming. The
+   * textarea's `maxlength` would count an emoji as two.
+   */
+  const length = $derived([...message.trim()].length);
+  const tooLong = $derived(length > MAX_AWAY_MESSAGE);
 
   $effect(() => watchPreferences((p) => (autoReply = p.autoReply)));
 
@@ -53,7 +59,6 @@
     <textarea
       class="aim-field grow"
       bind:value={message}
-      maxlength={MAX_AWAY_MESSAGE}
       disabled={busy || own.supported === false}
       autofocus
       required
@@ -71,6 +76,10 @@
 
   {#if error}
     <p class="aim-alert" role="alert">{error}</p>
+  {:else if tooLong}
+    <p class="aim-alert" role="alert">
+      Away messages can be up to {MAX_AWAY_MESSAGE} characters; this one is {length}.
+    </p>
   {:else if own.supported === false}
     <p class="aim-alert" role="alert">This server doesn't support away messages.</p>
   {:else if own.supported === null}
@@ -79,7 +88,7 @@
 
   <div class="actions">
     <button class="aim-btn" type="button" onclick={close}>Cancel</button>
-    <button class="aim-btn is-default" type="submit" disabled={busy || own.supported !== true}>
+    <button class="aim-btn is-default" type="submit" disabled={busy || own.supported !== true || tooLong}>
       {own.away ? "Update" : "I'm Away"}
     </button>
   </div>

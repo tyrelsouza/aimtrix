@@ -55,7 +55,7 @@ npm ci --no-audit --no-fund >/dev/null
 # The cached target keeps old bundles; start without them.
 rm -rf src-tauri/target/release/bundle
 # AppImages need FUSE to build their own tooling; extract instead.
-APPIMAGE_EXTRACT_AND_RUN=1 npm run tauri build
+APPIMAGE_EXTRACT_AND_RUN=1 npm run tauri build -- -- --locked
 # The licenses of the libraries the AppImage bundles, into it and beside it.
 bash dev/appimage-notices.sh src-tauri/target/release/bundle/appimage
 

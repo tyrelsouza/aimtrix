@@ -13,8 +13,10 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+// fileURLToPath, not `.pathname`, which keeps %20 for spaces in the path.
+const root = fileURLToPath(new URL("..", import.meta.url));
 const out = join(root, "src-tauri/THIRD-PARTY-LICENSES.html");
 const check = process.argv.includes("--check");
 
@@ -60,6 +62,7 @@ const npm = [...bundled].sort().map((name) => {
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
   const file = readdirSync(dir).find((f) => /^(licen[cs]e|copying)/i.test(f));
   if (!file) throw new Error(`${name} has no license file`);
+  if (!pkg.license) throw new Error(`${name} doesn't say what its license is`);
   return { name, version: pkg.version, license: pkg.license, text: readFileSync(join(dir, file), "utf8").trim() };
 });
 

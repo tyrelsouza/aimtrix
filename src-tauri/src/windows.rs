@@ -1,7 +1,10 @@
 //! Opening the app's windows. Each is focused instead of duplicated if it's
 //! already open.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
+use tauri::{
+    AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry,
+    webview::NewWindowResponse,
+};
 
 use crate::{matrix::rooms::Kind, preferences, session, tray};
 
@@ -13,12 +16,32 @@ const FRAME_HEIGHT: f64 = 24.0;
 
 /// A window without the platform's title bar and frame: AIMtrix draws
 /// AIM-style ones on every platform (PLAN.md 8.4).
+///
+/// Windows only ever show AIMtrix's own pages: navigating anywhere else (a
+/// link in a message, say) is refused, and so are new windows, so no web
+/// page can end up with access to the app's commands.
 fn aim_window(
     app: &AppHandle,
     label: impl Into<String>,
     url: WebviewUrl,
 ) -> WebviewWindowBuilder<'_, Wry, AppHandle> {
-    WebviewWindowBuilder::new(app, label, url).decorations(false)
+    WebviewWindowBuilder::new(app, label, url)
+        .decorations(false)
+        .on_navigation(is_app_page)
+        .on_new_window(|_, _| NewWindowResponse::Deny)
+}
+
+/// Whether `url` is one of AIMtrix's own pages: `tauri://localhost` (Linux,
+/// macOS), `http(s)://tauri.localhost` (Windows), or the dev server in a
+/// development build.
+fn is_app_page(url: &Url) -> bool {
+    match (url.scheme(), url.host_str()) {
+        ("tauri", Some("localhost")) => true,
+        ("http" | "https", Some("tauri.localhost")) => true,
+        ("http", Some("localhost")) => cfg!(debug_assertions) && url.port() == Some(1420),
+        ("about", _) => url.as_str() == "about:blank",
+        _ => false,
+    }
 }
 
 /// The Buddy List is the `main` window. Shows it again if it was hidden in
@@ -60,22 +83,41 @@ pub fn close_buddy_list(app: &AppHandle) {
     }
 }
 
-/// `signed_out` makes Sign On explain that the server ended the session.
-pub fn open_sign_on(app: &AppHandle, signed_out: bool) -> tauri::Result<()> {
+/// What Sign On explains when it opens.
+pub enum SignOnNotice {
+    None,
+    /// The server ended the session (signed out from another client).
+    SignedOut,
+    /// The saved session couldn't be resumed, and why. It's kept: the cause
+    /// may be temporary, like a locked keyring.
+    ResumeFailed(String),
+}
+
+pub fn open_sign_on(app: &AppHandle, notice: SignOnNotice) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("signon") {
         return window.set_focus();
     }
-    let url = if signed_out {
-        "/signon?signed-out"
-    } else {
-        "/signon"
+    let url = match notice {
+        SignOnNotice::None => "/signon".to_owned(),
+        SignOnNotice::SignedOut => "/signon?signed-out".to_owned(),
+        SignOnNotice::ResumeFailed(reason) => {
+            format!("/signon?resume-failed={}", encode_query(&reason))
+        }
     };
-    aim_window(app, "signon", WebviewUrl::App(url.into()))
+    let window = aim_window(app, "signon", WebviewUrl::App(url.into()))
         .title("Sign On")
         .inner_size(260.0 + FRAME_WIDTH, 350.0 + FRAME_HEIGHT)
         .resizable(false)
         .center()
         .build()?;
+    // A browser sign-on still waiting when Sign On closes is abandoned, not
+    // left to finish unseen.
+    let app = app.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::Destroyed = event {
+            app.state::<crate::commands::BrowserSignOn>().cancel();
+        }
+    });
     Ok(())
 }
 
@@ -343,6 +385,19 @@ mod tests {
         let chat = RoomWindow::for_kind(Kind::Group);
         assert_eq!(chat.route, "/chat");
         assert_eq!(chat.title("Test Chat"), "Test Chat - Chat Room");
+    }
+
+    #[test]
+    fn windows_stay_on_app_pages() {
+        let ok = |u: &str| is_app_page(&Url::parse(u).unwrap());
+        assert!(ok("tauri://localhost/im?room=%21a%3Alocalhost"));
+        assert!(ok("http://tauri.localhost/"));
+        assert!(ok("https://tauri.localhost/chat"));
+        assert!(ok("about:blank"));
+        assert!(!ok("https://example.org/"));
+        assert!(!ok("http://localhost:8008/"));
+        assert!(!ok("file:///etc/passwd"));
+        assert!(!ok("tauri://evil.example/"));
     }
 
     #[test]

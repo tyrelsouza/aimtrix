@@ -3,26 +3,34 @@
 //! `spawn_blocking`.
 
 use keyring::{Entry, Error};
-use matrix_sdk::authentication::{matrix::MatrixSession, oauth::UserSession};
+use matrix_sdk::{
+    authentication::{matrix::MatrixSession, oauth::UserSession},
+    ruma::OwnedDeviceId,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 const SERVICE: &str = "bike.tyrel.aimtrix";
 const USER: &str = "session";
 
-/// Everything needed to resume without signing on again.
-#[derive(Serialize, Deserialize)]
+/// Everything needed to resume without signing on again. No `Debug`: it
+/// holds the tokens.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SavedSession {
     pub homeserver: String,
     /// Encrypts the SQLite store, which will hold E2EE keys.
     pub store_passphrase: String,
+    /// The store's folder in `stores/` (see `matrix::store_path`). Sessions
+    /// saved before each had its own folder have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store: Option<String>,
     #[serde(flatten)]
     pub auth: SavedAuth,
 }
 
 /// How the session signed on. Told apart by their fields, so sessions saved
 /// before OAuth sign-on existed (just `session`) still load.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SavedAuth {
     /// With a password (the Matrix login API).
@@ -36,18 +44,46 @@ pub enum SavedAuth {
     },
 }
 
+impl SavedAuth {
+    pub fn device_id(&self) -> &OwnedDeviceId {
+        match self {
+            Self::Password { session } => &session.meta.device_id,
+            Self::OAuth { oauth, .. } => &oauth.meta.device_id,
+        }
+    }
+}
+
+/// Why the saved session couldn't be loaded.
+#[derive(Debug)]
+pub enum LoadError {
+    /// It's there but can't be read: it will never work.
+    Unreadable,
+    /// The keyring couldn't be reached (locked, not running yet…). Trying
+    /// again later may work.
+    Keyring(String),
+}
+
 fn entry() -> Result<Entry, String> {
     Entry::new(SERVICE, USER).map_err(|e| format!("Keyring unavailable: {e}"))
 }
 
-pub fn load() -> Result<Option<SavedSession>, String> {
-    match entry()?.get_password() {
+pub fn load() -> Result<Option<SavedSession>, LoadError> {
+    match entry().map_err(LoadError::Keyring)?.get_password() {
         // Don't include the serde error: it can quote the token.
         Ok(json) => serde_json::from_str(&json)
             .map(Some)
-            .map_err(|_| "The saved session is unreadable.".to_owned()),
+            .map_err(|_| LoadError::Unreadable),
         Err(Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("Keyring error: {e}")),
+        Err(e) => Err(LoadError::Keyring(format!("Keyring error: {e}"))),
+    }
+}
+
+impl LoadError {
+    pub fn message(&self) -> String {
+        match self {
+            Self::Unreadable => "The saved session is unreadable.".to_owned(),
+            Self::Keyring(message) => message.clone(),
+        }
     }
 }
 
@@ -68,7 +104,7 @@ pub fn save(saved: &SavedSession) -> Result<(), String> {
 /// save it.
 pub fn update(change: impl FnOnce(&mut SavedSession) -> bool) -> Result<(), String> {
     let _changing = changing();
-    let Some(mut saved) = load()? else {
+    let Some(mut saved) = load().map_err(|e| e.message())? else {
         return Ok(());
     };
     if change(&mut saved) {
@@ -85,8 +121,26 @@ fn write(saved: &SavedSession) -> Result<(), String> {
         .map_err(|e| format!("Couldn't save session to keyring: {e}"))
 }
 
+/// Forget the saved session, whichever it is.
 pub fn forget() -> Result<(), String> {
     let _changing = changing();
+    delete()
+}
+
+/// Forget the saved session if it's the one for `device`. A sign-off still
+/// finishing after you signed on again leaves the new session alone.
+pub fn forget_device(device: &OwnedDeviceId) -> Result<(), String> {
+    let _changing = changing();
+    match load() {
+        Ok(Some(saved)) if saved.auth.device_id() == device => delete(),
+        Ok(_) => Ok(()),
+        // Unreadable: it isn't anyone's session.
+        Err(LoadError::Unreadable) => delete(),
+        Err(LoadError::Keyring(message)) => Err(message),
+    }
+}
+
+fn delete() -> Result<(), String> {
     match entry()?.delete_credential() {
         Ok(()) | Err(Error::NoEntry) => Ok(()),
         Err(e) => Err(format!("Couldn't remove session from keyring: {e}")),

@@ -88,7 +88,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                open(tray.app_handle());
+                open(tray.app_handle().clone());
             }
         })
         .build(app)?;
@@ -98,15 +98,17 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
 /// Change what the tray shows, redrawing it if anything changed.
 pub fn update(app: &AppHandle, change: impl FnOnce(&mut State)) {
     let tray_state = app.state::<Tray>();
-    let state = {
+    {
         let mut current = tray_state.0.lock().unwrap();
         let before = current.clone();
         change(&mut current);
         if *current == before {
             return;
         }
-        current.clone()
-    };
+    }
+    // Drawn from the state as it is now, not as this change left it: when
+    // two updates race, whichever draws last still draws the newest.
+    let state = tray_state.0.lock().unwrap().clone();
     #[cfg(target_os = "macos")]
     dock_badge(app, &state);
     let Some(tray) = app.tray_by_id(ID) else {
@@ -176,13 +178,18 @@ fn menu(app: &AppHandle, state: &State) -> tauri::Result<Menu<tauri::Wry>> {
     Ok(menu)
 }
 
+/// Runs on the main thread, which mustn't create windows itself (that can
+/// deadlock on Windows), so window work is spawned.
 fn on_menu(app: &AppHandle, id: &str) {
     match id {
-        "open" => open(app),
+        "open" => open(app.clone()),
         "away" => {
-            if let Err(e) = windows::open_away(app) {
-                eprintln!("Couldn't open Away Message: {e}");
-            }
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = windows::open_away(&app) {
+                    eprintln!("Couldn't open Away Message: {e}");
+                }
+            });
         }
         "back" => {
             let app = app.clone();
@@ -194,29 +201,28 @@ fn on_menu(app: &AppHandle, id: &str) {
         }
         "signoff" => {
             let app = app.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = session::sign_off(&app).await {
-                    eprintln!("Couldn't sign off: {e}");
-                }
-            });
+            tauri::async_runtime::spawn(async move { session::sign_off(&app).await });
         }
         "quit" => app.exit(0),
         _ => {}
     }
 }
 
-/// The Buddy List when signed on, Sign On otherwise (the tray, and the
-/// Dock on macOS).
-pub fn open(app: &AppHandle) {
-    let signed_on = app.state::<Tray>().0.lock().unwrap().user.is_some();
-    let opened = if signed_on {
-        windows::open_buddy_list(app)
-    } else {
-        windows::open_sign_on(app, false)
-    };
-    if let Err(e) = opened {
-        eprintln!("Couldn't open a window: {e}");
-    }
+/// Open the Buddy List when signed on, Sign On otherwise (the tray, and
+/// the Dock on macOS). Called on the main thread, so the window is opened
+/// from a task: creating one on the main thread can deadlock on Windows.
+pub fn open(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let signed_on = app.state::<Tray>().0.lock().unwrap().user.is_some();
+        let opened = if signed_on {
+            windows::open_buddy_list(&app)
+        } else {
+            windows::open_sign_on(&app, windows::SignOnNotice::None)
+        };
+        if let Err(e) = opened {
+            eprintln!("Couldn't open a window: {e}");
+        }
+    });
 }
 
 fn tooltip(state: &State) -> String {

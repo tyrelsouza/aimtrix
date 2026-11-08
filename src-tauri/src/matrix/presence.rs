@@ -315,9 +315,15 @@ async fn detect(client: &Client, own: &UserId) -> Option<bool> {
             None
         }
         // Some servers refuse presence requests outright when it's off.
-        Err(e) => {
-            eprintln!("Couldn't read presence, treating it as off: {e}");
+        Err(e) if status_of(&e) == Some(403) => {
+            eprintln!("The server refused to read presence, treating it as off: {e}");
             Some(false)
+        }
+        // A network blip or a struggling server says nothing about presence:
+        // ask again, rather than turning it off for the whole session.
+        Err(e) => {
+            eprintln!("Couldn't read presence, trying again later: {e}");
+            None
         }
     }
 }

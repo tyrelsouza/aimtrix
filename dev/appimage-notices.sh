@@ -77,8 +77,11 @@ trap 'rm -rf "$work"' EXIT
 tool="$(find "$work/squashfs-root" -name appimagetool -type f | head -1)"
 offset="$(APPIMAGE_EXTRACT_AND_RUN=1 "$image" --appimage-offset)"
 head -c "$offset" "$image" > "$work/runtime"
-rm -f "$image"
-ARCH=x86_64 "$tool" --no-appstream --runtime-file "$work/runtime" "$appdir" "$image" >/dev/null 2>&1 ||
-  { echo "Repacking the AppImage failed" >&2; exit 1; }
+# Into a new file first: if repacking fails, the original stays, and so does
+# the tool's output to say why.
+ARCH=x86_64 "$tool" --no-appstream --runtime-file "$work/runtime" "$appdir" "$work/repacked.AppImage" \
+  >"$work/appimagetool.log" 2>&1 ||
+  { cat "$work/appimagetool.log" >&2; echo "Repacking the AppImage failed" >&2; exit 1; }
+mv -f "$work/repacked.AppImage" "$image"
 chmod +x "$image"
 echo "Added the licenses of $(echo "$packages" | wc -w) bundled packages to $(basename "$image")"

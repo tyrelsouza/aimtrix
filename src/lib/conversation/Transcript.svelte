@@ -209,7 +209,7 @@
           </div>
         {/if}
         <!-- The HTML was cleaned by the Rust core. -->
-        <span class="aim-msg__name" class:aim-msg__name--self={line.own} class:aim-msg__name--buddy={!line.own}>{line.emote ? `* ${line.name}` : `${line.name}:`}</span>
+        <span class="aim-msg__name" class:aim-msg__name--self={line.own} class:aim-msg__name--buddy={!line.own} title={line.sender}>{line.emote ? `* ${line.name}` : `${line.name}:`}</span>
         {#if line.media}
           {@const media = line.media}
           {@const thumbnail = line.eventId ? thumbnails[line.eventId] : undefined}

@@ -84,17 +84,32 @@ impl Preferences {
 }
 
 /// The saved preferences, or the defaults if there are none (or the file
-/// is damaged).
+/// is damaged). A value that can't be read (from a newer version, or edited
+/// by hand) falls back to its default on its own; the others are kept.
 fn load(path: &Path) -> Preferences {
-    match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice::<Preferences>(&bytes)
-            .map(Preferences::checked)
-            .unwrap_or_else(|e| {
-                eprintln!("Ignoring damaged preferences in {}: {e}", path.display());
-                Preferences::default()
-            }),
-        Err(_) => Preferences::default(),
+    let Ok(bytes) = std::fs::read(path) else {
+        return Preferences::default();
+    };
+    let saved = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(serde_json::Value::Object(saved)) => saved,
+        _ => {
+            eprintln!("Ignoring damaged preferences in {}", path.display());
+            return Preferences::default();
+        }
+    };
+    let mut merged = serde_json::to_value(Preferences::default()).expect("preferences serialize");
+    for (key, value) in saved {
+        let mut tried = merged.clone();
+        tried[&key] = value;
+        if serde_json::from_value::<Preferences>(tried.clone()).is_ok() {
+            merged = tried;
+        } else {
+            eprintln!("Ignoring the preference {key} in {}", path.display());
+        }
     }
+    serde_json::from_value::<Preferences>(merged)
+        .map(Preferences::checked)
+        .unwrap_or_default()
 }
 
 /// Save, replacing the file in one step so a crash can't leave half of it.
@@ -188,6 +203,21 @@ mod tests {
         }
         .checked();
         assert_eq!(upper.text_color, "#00ff00");
+    }
+
+    #[test]
+    fn one_bad_value_leaves_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preferences.json");
+        std::fs::write(
+            &path,
+            r#"{ "autoReply": true, "fontSize": "huge", "fontFace": "Georgia" }"#,
+        )
+        .unwrap();
+        let prefs = load(&path);
+        assert!(prefs.auto_reply);
+        assert_eq!(prefs.font_face, "Georgia");
+        assert_eq!(prefs.font_size, FontSize::Normal);
     }
 
     #[test]

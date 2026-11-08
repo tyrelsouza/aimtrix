@@ -38,6 +38,9 @@ mime = "0.3"
 mime_guess = "2"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 arboard = { version = "3.7.0", default-features = false, features = ["image-data", "wayland-data-control"] }
+# A second launch hands over to the running AIMtrix: two would share one
+# store and one device, which corrupts encryption state.
+tauri-plugin-single-instance = "2"
 
 
 # The tray (tray.rs) checks AppIndicator can load before using it, since

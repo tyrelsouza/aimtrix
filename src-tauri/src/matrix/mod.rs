@@ -55,6 +55,8 @@ pub struct Session {
     pub timelines: std::sync::Mutex<HashMap<String, std::sync::Arc<timeline::Watching>>>,
     /// The files being sent from each open room window, by room ID.
     pub uploads: std::sync::Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
+    /// Held while setting which rooms sync sends in full.
+    pub subscribing: Mutex<()>,
     /// Who's in each open Chat Room, by room ID.
     pub members: std::sync::Mutex<HashMap<String, members::Watching>>,
     /// Whether this device can read old messages, for windows that open
@@ -65,11 +67,16 @@ pub struct Session {
     pub trust: std::sync::Mutex<verify::Trust>,
     /// The verification in progress, if any, and where it is.
     pub verification: std::sync::Mutex<Option<std::sync::Arc<verify::Flow>>>,
+    /// The current verification's number (`session::new_verification`);
+    /// 0 for none.
+    pub verification_id: std::sync::Mutex<u64>,
     pub verification_step: std::sync::Mutex<Option<verify::Step>>,
 }
 
 pub struct Signed {
     pub client: Client,
+    /// Where the client's store is, to delete it when signing off.
+    pub store: PathBuf,
     pub sync: sync::Syncing,
     pub buddy_list: tauri::async_runtime::JoinHandle<()>,
     /// Our presence and away message, and our buddies'.
@@ -83,17 +90,99 @@ pub struct Signed {
     pub auto_reply: auto_reply::Watching,
 }
 
-fn store_dir(data_dir: &Path) -> PathBuf {
+/// Every session's store has a folder of its own here, so a sign-on or
+/// sign-off still finishing in the background can only touch its own.
+fn stores_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("stores")
+}
+
+/// The one store of sessions saved before each had its own folder.
+fn legacy_store_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("matrix-store")
 }
 
-/// Sign on with a password, and save the session so the next launch can resume.
+/// Where `saved`'s store is.
+fn store_path(data_dir: &Path, saved: &SavedSession) -> PathBuf {
+    match &saved.store {
+        // Just a name: never let the keyring point outside `stores/`.
+        Some(name) if Path::new(name).file_name() == Some(name.as_ref()) => {
+            stores_dir(data_dir).join(name)
+        }
+        Some(_) | None => legacy_store_dir(data_dir),
+    }
+}
+
+/// A signed-on client and where its store is.
+pub struct Account {
+    pub client: Client,
+    pub store: PathBuf,
+}
+
+/// A sign-on that worked but isn't saved yet: [`NewSession::save`] it, or
+/// [`NewSession::discard`] it.
+pub struct NewSession {
+    pub account: Account,
+    saved: SavedSession,
+}
+
+impl NewSession {
+    /// Save the session so the next launch can resume it, and delete the
+    /// stores of earlier sessions, which can't be resumed any more. On
+    /// failure the caller should [`discard`](Self::discard) it.
+    pub async fn save(&self, data_dir: &Path) -> Result<(), String> {
+        let saved = self.saved.clone();
+        spawn_blocking(move || keyring::save(&saved))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| {
+                if cfg!(target_os = "linux") {
+                    format!(
+                        "{e}. AIMtrix keeps your session in the system keyring: make sure \
+                         GNOME Keyring or KWallet is running and unlocked, then try again."
+                    )
+                } else {
+                    e
+                }
+            })?;
+        remove_other_stores(data_dir, &self.account.store);
+        Ok(())
+    }
+
+    /// End the session on the server and delete its store: the sign-on
+    /// worked but can't be used.
+    pub async fn discard(self) {
+        let Account { client, store } = self.account;
+        if let Err(e) = log_out(&client).await {
+            eprintln!("Couldn't end an unused session on the server: {e}");
+        }
+        drop(client);
+        if let Err(e) = remove_store(&store) {
+            eprintln!("{e}");
+        }
+    }
+}
+
+/// Delete every store but `keep`'s, including one from before stores had
+/// their own folders. Best effort: a store still open elsewhere may refuse.
+fn remove_other_stores(data_dir: &Path, keep: &Path) {
+    let mut old = vec![legacy_store_dir(data_dir)];
+    if let Ok(entries) = std::fs::read_dir(stores_dir(data_dir)) {
+        old.extend(entries.filter_map(|e| e.ok()).map(|e| e.path()));
+    }
+    for store in old.iter().filter(|store| *store != keep) {
+        if let Err(e) = remove_store(store) {
+            eprintln!("{e}");
+        }
+    }
+}
+
+/// Sign on with a password. Save the result before using it.
 pub async fn sign_on(
     data_dir: &Path,
     homeserver: &str,
     username: &str,
     password: &str,
-) -> Result<Client, String> {
+) -> Result<NewSession, String> {
     new_sign_on(data_dir, async |store, passphrase| {
         login(store, passphrase, homeserver, username, password).await
     })
@@ -102,6 +191,7 @@ pub async fn sign_on(
 
 /// What a server lets you sign on with, for the Sign On window.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Methods {
     /// Screen name and password.
     pub password: bool,
@@ -134,8 +224,8 @@ pub async fn sign_on_methods(homeserver: &str) -> Result<Methods, String> {
 /// How long to wait for sign-on in the browser before giving up.
 const BROWSER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
-/// Sign on in the browser with OAuth, and save the session so the next
-/// launch can resume. `open` shows the server's sign-on page; this then
+/// Sign on in the browser with OAuth; save the result before using it.
+/// `open` shows the server's sign-on page; this then
 /// waits for the browser to come back, until `cancelled` resolves or
 /// [`BROWSER_TIMEOUT`].
 pub async fn sign_on_with_browser(
@@ -143,23 +233,24 @@ pub async fn sign_on_with_browser(
     homeserver: &str,
     open: impl FnOnce(&Url) -> Result<(), String>,
     cancelled: impl Future<Output = ()>,
-) -> Result<Client, String> {
+) -> Result<NewSession, String> {
     new_sign_on(data_dir, async |store, passphrase| {
         browser_login(store, passphrase, homeserver, open, cancelled).await
     })
     .await
 }
 
-/// Sign on into a fresh store with `log_in`, then save the session. A store
-/// belongs to one device, so every sign-on starts a new one; a sign-on that
+/// Sign on into a new store with `log_in`. A store belongs to one device, so
+/// every sign-on starts a new one, in a folder of its own; a sign-on that
 /// fails leaves nothing behind.
 async fn new_sign_on(
     data_dir: &Path,
     log_in: impl AsyncFnOnce(&Path, &str) -> Result<Client, String>,
-) -> Result<Client, String> {
-    let store = store_dir(data_dir);
-    remove_store(&store)?;
+) -> Result<NewSession, String> {
+    let name = Alphanumeric.sample_string(&mut rand::rng(), 16);
+    let store = stores_dir(data_dir).join(&name);
     let passphrase = Alphanumeric.sample_string(&mut rand::rng(), 32);
+    create_private_dir(&store)?;
 
     let client = match log_in(&store, &passphrase).await {
         Ok(client) => client,
@@ -171,12 +262,13 @@ async fn new_sign_on(
     let saved = SavedSession {
         homeserver: client.homeserver().to_string(),
         store_passphrase: passphrase,
+        store: Some(name),
         auth: saved_auth(&client).expect("signed-on client has a session"),
     };
-    spawn_blocking(move || keyring::save(&saved))
-        .await
-        .map_err(|e| e.to_string())??;
-    Ok(client)
+    Ok(NewSession {
+        account: Account { client, store },
+        saved,
+    })
 }
 
 /// The session as it's saved, with its current tokens.
@@ -204,10 +296,7 @@ pub async fn save_refreshed_tokens(client: &Client) -> Result<(), String> {
     let device = client.device_id().map(ToOwned::to_owned);
     spawn_blocking(move || {
         keyring::update(|saved| {
-            let same_device = match &saved.auth {
-                SavedAuth::Password { session } => Some(&session.meta.device_id),
-                SavedAuth::OAuth { oauth, .. } => Some(&oauth.meta.device_id),
-            } == device.as_ref();
+            let same_device = Some(saved.auth.device_id()) == device.as_ref();
             if same_device {
                 saved.auth = auth;
             }
@@ -220,26 +309,41 @@ pub async fn save_refreshed_tokens(client: &Client) -> Result<(), String> {
 
 /// Resume the saved session, if there is one. Works offline: the token is
 /// only checked once syncing starts.
-pub async fn resume(data_dir: &Path) -> Result<Option<Client>, String> {
-    let Some(saved) = spawn_blocking(keyring::load)
+///
+/// Errors may well be temporary (the keyring is locked or not running yet,
+/// the disk is full), so they leave the session and its store alone: they
+/// hold the keys to old encrypted messages. Only a saved session that can
+/// never be read is forgotten.
+pub async fn resume(data_dir: &Path) -> Result<Option<Account>, String> {
+    let saved = match spawn_blocking(keyring::load)
         .await
-        .map_err(|e| e.to_string())??
-    else {
-        return Ok(None);
+        .map_err(|e| e.to_string())?
+    {
+        Ok(Some(saved)) => saved,
+        Ok(None) => return Ok(None),
+        Err(keyring::LoadError::Unreadable) => {
+            eprintln!("The saved session is unreadable; forgetting it.");
+            spawn_blocking(keyring::forget)
+                .await
+                .map_err(|e| e.to_string())??;
+            return Ok(None);
+        }
+        Err(keyring::LoadError::Keyring(message)) => return Err(message),
     };
-    restore(&store_dir(data_dir), &saved).await.map(Some)
+    let store = store_path(data_dir, &saved);
+    let client = restore(&store, &saved).await?;
+    Ok(Some(Account { client, store }))
 }
 
 /// Sign off: delete this device on the server, then forget it locally. Local
 /// cleanup happens even if the server can't be reached.
-pub async fn sign_off(data_dir: &Path, client: Client) -> Result<(), String> {
+pub async fn sign_off(account: Account) -> Result<(), String> {
     // Otherwise buddies see us online until the server times us out.
-    presence::sign_off(&client).await;
-    if let Err(e) = log_out(&client).await {
+    presence::sign_off(&account.client).await;
+    if let Err(e) = log_out(&account.client).await {
         eprintln!("Server-side logout failed, forgetting the session anyway: {e}");
     }
-    drop(client);
-    forget(data_dir).await
+    forget(account).await
 }
 
 /// End the session on the server: delete the device, or with OAuth, revoke
@@ -299,12 +403,37 @@ fn form_encode(value: &str) -> String {
         .collect()
 }
 
-/// Forget the saved session and its store without contacting the server.
-pub async fn forget(data_dir: &Path) -> Result<(), String> {
+/// Forget `account` and delete its store without contacting the server. If
+/// another session has been saved since, it stays.
+pub async fn forget(account: Account) -> Result<(), String> {
+    let Account { client, store } = account;
+    let device = client.device_id().map(ToOwned::to_owned);
+    drop(client);
+    let forgotten = match device {
+        Some(device) => spawn_blocking(move || keyring::forget_device(&device))
+            .await
+            .map_err(|e| e.to_string())?,
+        None => Ok(()),
+    };
+    // The store goes even if the keyring couldn't be changed: the session
+    // can't resume without it.
+    let removed = remove_store(&store);
+    forgotten.and(removed)
+}
+
+/// Forget whatever session is saved, and delete its store, without
+/// contacting the server: signing off when no session could be resumed.
+pub async fn forget_saved(data_dir: &Path) -> Result<(), String> {
+    let saved = spawn_blocking(keyring::load)
+        .await
+        .map_err(|e| e.to_string())?;
     spawn_blocking(keyring::forget)
         .await
         .map_err(|e| e.to_string())??;
-    remove_store(&store_dir(data_dir))
+    match saved {
+        Ok(Some(saved)) => remove_store(&store_path(data_dir, &saved)),
+        _ => Ok(()),
+    }
 }
 
 /// Log in with a password into a new store at `store`.
@@ -395,6 +524,7 @@ async fn browser_login(
             );
             format!("The server wouldn't start signing on: {e}")
         })?;
+    check_browser_url(&authorization.url)?;
     open(&authorization.url)?;
 
     let query = tokio::select! {
@@ -424,6 +554,29 @@ async fn browser_login(
         }
     })?;
     Ok(client)
+}
+
+/// The sign-on page comes from the server's metadata, and over plain http
+/// the SDK checks little of it. Opening it hands it to whatever the system
+/// has registered for its scheme, so allow only web pages: https, or http
+/// on this computer (dev servers).
+fn check_browser_url(url: &Url) -> Result<(), String> {
+    let local = url.host_str().is_some_and(|host| {
+        host == "localhost"
+            || host
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" if local => Ok(()),
+        _ => Err(format!(
+            "The server's sign-on page isn't a secure web page ({}), so AIMtrix won't open it.",
+            url.scheme()
+        )),
+    }
 }
 
 /// How AIMtrix describes itself when registering with a server.
@@ -538,6 +691,19 @@ fn builder(store: &Path, passphrase: &str) -> matrix_sdk::ClientBuilder {
         // OAuth access tokens expire; the SDK refreshes them as needed, and
         // `sync` saves the new ones.
         .handle_refresh_tokens()
+}
+
+/// Make `dir` (and its parents), readable only by you where the system
+/// has such permissions. The store's contents are encrypted, but not its
+/// file names and sizes.
+fn create_private_dir(dir: &Path) -> Result<(), String> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder
+        .create(dir)
+        .map_err(|e| format!("Couldn't create the session store: {e}"))
 }
 
 fn remove_store(store: &Path) -> Result<(), String> {
@@ -713,6 +879,7 @@ mod tests {
         let mut saved = SavedSession {
             homeserver: client.homeserver().to_string(),
             store_passphrase: PASS.to_owned(),
+            store: None,
             auth: saved_auth(&client).unwrap(),
         };
         drop(client);
@@ -793,6 +960,7 @@ mod tests {
         let saved = SavedSession {
             homeserver: client.homeserver().to_string(),
             store_passphrase: PASS.to_owned(),
+            store: None,
             auth: saved_auth(&client).unwrap(),
         };
         restore(other_dir.path(), &saved)
@@ -811,6 +979,19 @@ mod tests {
         )
         .await;
         syncing.stop().await;
+    }
+
+    #[test]
+    fn only_web_pages_open_for_browser_sign_on() {
+        let ok = |u: &str| check_browser_url(&Url::parse(u).unwrap()).is_ok();
+        assert!(ok("https://account.matrix.org/authorize?x=1"));
+        assert!(ok("http://localhost:8014/authorize"));
+        assert!(ok("http://127.0.0.1:8014/authorize"));
+        assert!(ok("http://[::1]:8014/authorize"));
+        assert!(!ok("http://evil.example/authorize"));
+        assert!(!ok("smb://evil.example/share"));
+        assert!(!ok("search-ms:query=x"));
+        assert!(!ok("file:///etc/passwd"));
     }
 
     #[test]
@@ -2279,16 +2460,25 @@ mod tests {
     async fn undecryptable_messages_turn_into_text_when_keys_arrive() {
         // Alice's first device gets the key as Carol sends.
         let first_dir = tempfile::tempdir().unwrap();
-        let (first, first_sync, first_list, room_id) =
-            sign_on_to_seed_room(first_dir.path(), "alice", "dm-e2ee", "Carol Chen").await;
-        let (mut first_lines, first_watch, mut first_diffs) = watch_lines(&first, &room_id).await;
+        let (first, first_sync, first_list, room_id) = step(
+            "first sign-on",
+            sign_on_to_seed_room(first_dir.path(), "alice", "dm-e2ee", "Carol Chen"),
+        )
+        .await;
+        let (mut first_lines, first_watch, mut first_diffs) =
+            step("first watch", watch_lines(&first, &room_id)).await;
         let carol_dir = tempfile::tempdir().unwrap();
-        let (carol, carol_sync, carol_list, _) =
-            sign_on_to_seed_room(carol_dir.path(), "carol", "dm-e2ee", "Alice Anderson").await;
-        let (_, carol_watch, _) = watch_lines(&carol, &room_id).await;
+        let (carol, carol_sync, carol_list, _) = step(
+            "carol's sign-on",
+            sign_on_to_seed_room(carol_dir.path(), "carol", "dm-e2ee", "Alice Anderson"),
+        )
+        .await;
+        let (_, carol_watch, _) = step("carol's watch", watch_lines(&carol, &room_id)).await;
         let body = format!("utd test {}", rand::random::<u32>());
-        knows_device(&carol, &first).await;
-        carol_watch.send(&body, None).await.unwrap();
+        step("carol knows the device", knows_device(&carol, &first)).await;
+        step("carol sends", carol_watch.send(&body, None))
+            .await
+            .unwrap();
         wait_for_lines(&mut first_lines, &mut first_diffs, "Carol's message", |l| {
             said(l, "Carol Chen", &body, false)
         })
@@ -2305,9 +2495,13 @@ mod tests {
 
         // A second device, signed on later, has no key for it…
         let second_dir = tempfile::tempdir().unwrap();
-        let (second, second_sync, second_list, _) =
-            sign_on_to_seed_room(second_dir.path(), "alice", "dm-e2ee", "Carol Chen").await;
-        let (mut lines, second_watch, mut diffs) = watch_lines(&second, &room_id).await;
+        let (second, second_sync, second_list, _) = step(
+            "second sign-on",
+            sign_on_to_seed_room(second_dir.path(), "alice", "dm-e2ee", "Carol Chen"),
+        )
+        .await;
+        let (mut lines, second_watch, mut diffs) =
+            step("second watch", watch_lines(&second, &room_id)).await;
         wait_for_lines(&mut lines, &mut diffs, "the placeholder", |l| {
             l.iter().any(|line| {
                 matches!(line, timeline::Line::Undecryptable { event_id: Some(e), name, .. }
@@ -2319,16 +2513,20 @@ mod tests {
         // …until it gets one (here by key export; 5.3 brings key backup).
         let keys = first_dir.path().join("keys.txt");
         let room = matrix_sdk::ruma::RoomId::parse(&room_id).unwrap();
-        first
-            .encryption()
-            .export_room_keys(keys.clone(), "export pass", |s| s.room_id() == room)
-            .await
-            .unwrap();
-        second
-            .encryption()
-            .import_room_keys(keys, "export pass")
-            .await
-            .unwrap();
+        step(
+            "exporting keys",
+            first
+                .encryption()
+                .export_room_keys(keys.clone(), "export pass", |s| s.room_id() == room),
+        )
+        .await
+        .unwrap();
+        step(
+            "importing keys",
+            second.encryption().import_room_keys(keys, "export pass"),
+        )
+        .await
+        .unwrap();
         wait_for_lines(&mut lines, &mut diffs, "the decrypted message", |l| {
             said(l, "Carol Chen", &body, false)
         })
@@ -2341,9 +2539,17 @@ mod tests {
         ] {
             drop(watching);
             list.abort();
-            syncing.stop().await;
-            client.logout().await.unwrap();
+            step("stopping sync", syncing.stop()).await;
+            step("logging out", client.logout()).await.unwrap();
         }
+    }
+
+    /// Run `future`, panicking with `what` after 2 minutes instead of
+    /// hanging the whole test run (each step's own waits are shorter).
+    async fn step<T>(what: &str, future: impl std::future::IntoFuture<Output = T>) -> T {
+        tokio::time::timeout(std::time::Duration::from_secs(120), future.into_future())
+            .await
+            .unwrap_or_else(|_| panic!("hung at: {what}"))
     }
 
     /// Wait for `client`'s recovery state to be `want`; panic after 20 s.
@@ -3641,6 +3847,7 @@ mod tests {
         let saved = SavedSession {
             homeserver: client.homeserver().to_string(),
             store_passphrase: PASS.to_owned(),
+            store: None,
             auth: saved_auth(&client).unwrap(),
         };
         let SavedAuth::OAuth { oauth, .. } = &saved.auth else {

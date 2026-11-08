@@ -103,11 +103,24 @@ export type Reply = {
   preview: string | null;
 };
 
-/** "12 KB", "3.4 MB". */
+/** "12 KB", "3.4 MB", "1.0 GB". */
 export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024) return `${bytes} bytes`;
+  // As `describe_size` in src-tauri/src/matrix/upload.rs: KB whole, MB and
+  // GB to one decimal, each only while the rounded number is under 1024.
+  const units: [string, number][] = [
+    ["KB", 0],
+    ["MB", 1],
+    ["GB", 1],
+  ];
+  let value = bytes / 1024;
+  for (const [i, [unit, decimals]] of units.entries()) {
+    const scale = 10 ** decimals;
+    const rounded = Math.round(value * scale) / scale;
+    if (rounded < 1024 || i === units.length - 1) return `${rounded.toFixed(decimals)} ${unit}`;
+    value /= 1024;
+  }
+  return `${bytes} bytes`;
 }
 
 /** Mirrors `Diff` in src-tauri/src/matrix/timeline.rs. */
@@ -123,6 +136,12 @@ type Diff =
   | { op: "remove"; index: number }
   | { op: "truncate"; length: number }
   | { op: "reset"; values: Line[] };
+
+/** Mirrors `WatchedDiff` in src-tauri/src/session.rs: a diff from one watch. */
+type WatchedDiff = Diff & { watch: number };
+
+/** Mirrors `Conversation` in src-tauri/src/session.rs. */
+type Conversation = { watch: number; lines: Line[] };
 
 function apply(lines: Line[], diff: Diff): Line[] {
   switch (diff.op) {
@@ -163,24 +182,28 @@ export function watchTimeline(
   const key = roomKey();
   let stopped = false;
   let lines: Line[] | null = null;
+  /** The watch our lines come from; diffs from any other are stale. */
+  let watch: number | null = null;
   // Diffs that arrive before the first lines come after them, so hold them.
-  const early: Diff[] = [];
+  const early: WatchedDiff[] = [];
 
-  const unlisten = listen<Diff>(`room:${key}:timeline_diff`, (e) => {
+  const unlisten = listen<WatchedDiff>(`room:${key}:timeline_diff`, (e) => {
     if (stopped) return;
     if (lines === null) {
       early.push(e.payload);
-    } else {
+    } else if (e.payload.watch === watch) {
       lines = apply(lines, e.payload);
       onChange(lines);
     }
   });
   // Listen first, so no change between the two is missed.
   unlisten
-    .then(() => invoke<Line[]>("room_timeline", { roomId }))
+    .then(() => invoke<Conversation>("room_timeline", { roomId }))
     .then((first) => {
       if (stopped) return;
-      lines = early.reduce(apply, first);
+      watch = first.watch;
+      // Diffs from a watch this one replaced (before a reload) don't fit.
+      lines = early.filter((d) => d.watch === watch).reduce(apply, first.lines);
       onChange(lines);
     })
     .catch((e) => !stopped && onError(String(e)));

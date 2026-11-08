@@ -46,7 +46,7 @@
   }
 
   const groups = $derived(
-    visibleSections(buddies).map(([section, title]) => ({
+    visibleSections(buddies, own.supported).map(([section, title]) => ({
       section,
       title,
       rooms: buddies.filter((b) => b.section === section),

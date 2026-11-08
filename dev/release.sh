@@ -11,9 +11,14 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 git fetch --quiet origin
+# Releases come from main, which CI checks (it runs only there).
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-if [ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$BRANCH" 2>/dev/null || true)" ]; then
-  echo "HEAD isn't pushed to origin/$BRANCH yet; push it first."
+if [ "$BRANCH" != main ]; then
+  echo "Releases come from main, and this is $BRANCH. Merge it first."
+  exit 1
+fi
+if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+  echo "HEAD isn't origin/main; pull or push first."
   exit 1
 fi
 

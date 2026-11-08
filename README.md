@@ -19,7 +19,7 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 | Send File | Send files and pictures: a button, drag and drop, or paste a picture. Encrypted in encrypted rooms. |
 | Block | Block and unblock a buddy from their IM window; their messages are hidden everywhere. |
 | Preferences | Font and size for conversations, and the color of your messages. |
-| IM window | One window per DM, with Buddy Icons, rich text (bold, italic, fonts, colors), "is typing…", read receipts, images, files, edits, deletions and replies. |
+| IM window | One window per DM, with Buddy Icons, rich text (bold, italic, underline, colors; pick a font for reading in Preferences), "is typing…", marking conversations read, images, files, edits, deletions and replies. |
 | Chat Room window | Member list, topic, and "X has entered the room" lines. |
 | Buddy Icon | Profile pictures, with original default icons. |
 
@@ -49,7 +49,7 @@ npm run tauri build  # build packages for this machine
 
 ### Packages and releases
 
-CI (`.github/workflows/ci.yml`) runs when something lands on `main`: the checks, unit tests and a release build on Linux, macOS and Windows, and the server tests against the dev homeservers on Linux.
+CI (`.github/workflows/ci.yml`) runs when something lands on `main`: the checks (including clippy, where any warning fails), unit tests and a release build on Linux, macOS and Windows, and the server tests against the dev homeservers on Linux.
 
 `mise run package` builds a `.deb` and an `.AppImage` in an Ubuntu 22.04 container (into `dist/`), so they run on Ubuntu 22.04, Debian 12 and anything newer. `mise run test-package` installs the `.deb` on a clean container and checks that it signs on and resumes. On a Mac, `mise run package-mac` builds a `.dmg` that runs on Intel and Apple Silicon Macs. It isn't signed, so the first time, right-click AIMtrix in Applications and choose Open. `mise run release` tags the current commit and pushes the tag, and GitHub Actions attaches the Linux packages and the `.dmg` to a draft release. Until AIMtrix goes public, builds are numbered `0.0.1-<seconds since midnight UTC>`.
 
@@ -78,7 +78,7 @@ Checks:
 npm run check                                        # type-check the frontend
 cargo test --manifest-path src-tauri/Cargo.toml      # Rust unit tests
 cargo test --manifest-path src-tauri/Cargo.toml -- --include-ignored --test-threads=8
-                                                     # also the tests that use both dev servers
+                                                     # also the tests that use the dev servers (all four profiles)
 ```
 
 If the server tests slow down, leftover test devices are the usual cause; `python3 dev/clean-devices.py` removes them.

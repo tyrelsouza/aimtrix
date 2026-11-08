@@ -32,6 +32,7 @@ pub struct Member {
 
 /// A Chat Room's people and topic, as the window first shows them.
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatRoom {
     pub members: Vec<Member>,
     /// `None` if the room has none.

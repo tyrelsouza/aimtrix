@@ -86,7 +86,7 @@
           {#each members ?? [] as member (member.userId)}
             <li class="aim-list__item" title={member.userId}>
               <img class="aim-list__icon" src={member.icon ?? DEFAULT_DM_ICON} alt="" />
-              <span class="name">{member.name}</span>
+              <span class="name">{member.name}{#if member.own} (you){/if}</span>
             </li>
           {/each}
         </ul>

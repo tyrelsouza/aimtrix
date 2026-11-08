@@ -10,6 +10,8 @@ How AIMtrix is built: what runs where, where things start, and how the pieces ta
 4. **[IPC reference](ipc.md):** every command and event, with arguments, payloads and who uses them.
 5. **[Development and testing](development.md):** running it, the dev homeservers, the test suites, CI, packages and releases.
 
+Past reviews are in [`reviews/`](reviews/): [2026-11-08 bug and security review](reviews/2026-11-08-bug-review.md).
+
 ## The shortest possible tour
 
 ```
@@ -37,7 +39,7 @@ If you only read three files, read `lib.rs`, `session.rs` and `src/routes/+page.
 | Chat Room | The window for a room with several people (route `/chat`). |
 | Buddy | One entry on the Buddy List: a room, shaped by `rooms::Buddy`. |
 | Room key | A 16-hex-digit FNV-1a hash of a room ID (`windows::room_key`). Room windows are labeled `room-<key>` and their events are `room:<key>:…`, because room IDs contain characters labels and event names can't. |
-| Store | The encrypted SQLite store matrix-sdk keeps in the app data folder (`matrix-store/`): room state, crypto keys, media cache. |
+| Store | The encrypted SQLite store matrix-sdk keeps in the app data folder, one folder per sign-on (`stores/<name>/`): room state, crypto keys, media cache. |
 | Saved session | What's needed to resume without signing on again, kept in the OS keyring (`matrix/keyring.rs`). |
 | Sliding sync | Simplified sliding sync (MSC4186), the only sync AIMtrix uses. Servers without it are refused at sign-on. |
 | UTD | "Unable to decrypt": an encrypted message whose key hasn't arrived. Shown as a placeholder that turns into the message by itself. |
