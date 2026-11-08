@@ -10,6 +10,12 @@ on:
   push:
     branches: [main]
 
+# No debug info in test builds: nothing here uses it, and it's most of
+# their size (the Linux runner ran out of disk with it).
+env:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+
 # A newer push to the same branch replaces a run still going.
 concurrency:
   group: ci-${{ github.ref }}
@@ -25,6 +31,12 @@ jobs:
         os: [ubuntu-22.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      # Debug and release builds together fill the Linux runner's disk;
+      # drop preinstalled toolchains AIMtrix doesn't use (~20 GB).
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
       - uses: actions/checkout@v5
 
       - name: Install Linux build dependencies
