@@ -48,8 +48,9 @@ Other dev tools:
 
 ```sh
 npm run check                                              # frontend type-check (svelte-check)
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings   # lint; CI fails on any warning
 cargo test --manifest-path src-tauri/Cargo.toml            # Rust unit tests: no server needed
-mise run check                                             # both
+mise run check                                             # all three
 ```
 
 **Unit tests** sit next to the code (`#[cfg(test)] mod tests`). They cover the pure rules: room classification (`rooms.rs`), timeline line mapping (`timeline.rs`), HTML sanitizing (`html.rs`), auto-reply decisions (`auto_reply.rs`), keyring formats (`keyring.rs`), preferences validation, tray icon drawing, window labels and sizes, upload preparation, and the sign-on refusal against a fake server.
@@ -77,7 +78,7 @@ cargo test --manifest-path src-tauri/Cargo.toml -- --include-ignored --test-thre
 
 `.github/workflows/ci.yml` runs on every push to `main` (merged pull requests), not on pull requests themselves, because a full run takes a while.
 
-- **Build** on `ubuntu-22.04`, `macos-latest` and `windows-latest`: `npm ci`, `npm run check`, the Rust unit tests, and a release build without bundling (`tauri build --no-bundle`, with LTO off to save time). Linux also checks the third-party licenses are current, and frees disk space first.
+- **Build** on `ubuntu-22.04`, `macos-latest` and `windows-latest`: `npm ci`, `npm run check`, clippy (any warning fails), the Rust unit tests, and a release build without bundling (`tauri build --no-bundle`, with LTO off to save time). Linux also checks the third-party licenses are current, and frees disk space first.
 - **Server tests** on Linux: starts every dev profile in Docker, seeds them, and runs the full suite with `--include-ignored --test-threads=8`, printing server logs on failure.
 
 Debug info is off in CI (`CARGO_PROFILE_DEV_DEBUG=0`), and a newer push cancels an older run.

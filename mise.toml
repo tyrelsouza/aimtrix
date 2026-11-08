@@ -5,8 +5,8 @@ description = "Run AIMtrix in development"
 run = "npm run tauri dev"
 
 [tasks.check]
-description = "Type-check the frontend and run the Rust unit tests"
-run = ["npm run check", "cargo test --manifest-path src-tauri/Cargo.toml"]
+description = "Type-check the frontend, run clippy and the Rust unit tests"
+run = ["npm run check", "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings", "cargo test --manifest-path src-tauri/Cargo.toml"]
 
 [tasks.test-server]
 description = "All Rust tests, including those against the dev homeservers (start them first)"

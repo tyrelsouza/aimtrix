@@ -65,9 +65,10 @@ pub enum Line {
         /// Changed after sending; `body` and `html` are the latest version.
         edited: bool,
         /// An image or file. `body` is then its caption, or its name.
-        media: Option<Media>,
+        /// Boxed, like `reply`, so a plain text line stays small.
+        media: Option<Box<Media>>,
         /// The message this one answers.
-        reply: Option<Reply>,
+        reply: Option<Box<Reply>>,
         /// Ours, and the server didn't take it.
         failed: bool,
         /// Milliseconds since the Unix epoch.
@@ -762,8 +763,8 @@ fn line(item: &TimelineItem) -> Line {
         html,
         emote,
         edited: message.is_edited(),
-        media,
-        reply,
+        media: media.map(Box::new),
+        reply: reply.map(Box::new),
         failed: matches!(
             event.send_state(),
             Some(EventSendState::SendingFailed { .. })
@@ -901,17 +902,17 @@ mod tests {
             html: None,
             emote: false,
             edited: true,
-            media: Some(Media {
+            media: Some(Box::new(Media {
                 kind: MediaKind::Image,
                 name: "cat.png".into(),
                 size: Some(1234),
                 width: Some(640),
                 height: None,
-            }),
-            reply: Some(Reply {
+            })),
+            reply: Some(Box::new(Reply {
                 name: Some("Alice Anderson".into()),
                 preview: Some("send a cat".into()),
-            }),
+            })),
             failed: false,
             timestamp: 5,
         };
