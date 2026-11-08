@@ -10,6 +10,8 @@ How AIMtrix is built: what runs where, where things start, and how the pieces ta
 4. **[IPC reference](ipc.md):** every command and event, with arguments, payloads and who uses them.
 5. **[Development and testing](development.md):** running it, the dev homeservers, the test suites, CI, packages and releases.
 
+Past reviews are in [`reviews/`](reviews/): [2026-11-08 bug and security review](reviews/2026-11-08-bug-review.md).
+
 ## The shortest possible tour
 
 ```
