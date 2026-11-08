@@ -5,6 +5,10 @@ What changed in each phase of `PLAN.md`, step by step. Open problems live under 
 ## Phase 8: Cross-platform
 
 ### Changes
+- **8.1 CI builds.** Every merge to `main` now runs CI (`.github/workflows/ci.yml`): the frontend type-check, the Rust unit tests, a check that the third-party licenses are current, and a release build, on Linux, macOS and Windows; plus every server test on Linux against all the dev homeservers (both Synapses, continuwuity, and Synapse behind MAS with Dex) in Docker. It's the first time AIMtrix has built on macOS and Windows. It runs only after merging, since a full run takes a while.
+  - Windows has no system SQLite to link, so matrix-sdk's `bundled-sqlite` now builds it in on every platform.
+  - CI builds without debug info and, for the release build, without LTO (the release workflow keeps it); the Linux runner first drops preinstalled toolchains it doesn't need, as debug and release builds together filled its disk.
+  - The revoked-token test waits past sync's 30-second long poll, which a slow runner can need. The workflows use `actions/checkout@v5` and `actions/setup-node@v5` (Node 24).
 - **MIT license.** AIMtrix is now MIT licensed (`LICENSE`). A new **About…** button in Preferences opens About AIMtrix, with the version, the license and **Third-Party…**, the licenses of everything AIMtrix is built with, which every package now includes.
   - `src-tauri/THIRD-PARTY-LICENSES.html` covers the 599 Rust crates shipped on Linux, macOS and Windows (from `cargo about`, which also refuses licenses not listed in `src-tauri/about.toml`) and the npm packages compiled into the frontend. `mise run licenses` regenerates it; CI fails when it's out of date.
   - The AppImage now carries `usr/share/doc/aimtrix/BUNDLED-LIBRARIES.txt`: the 113 Ubuntu packages whose libraries it bundles, with links to their source and their license and copyright notices (`dev/appimage-notices.sh`, run by the package build and the release workflow, which also attaches it to releases).
