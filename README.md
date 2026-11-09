@@ -6,6 +6,9 @@ A [Matrix](https://matrix.org) chat client that looks and behaves like AOL Insta
 
 **Status:** early and in progress (test builds are numbered 0.0.1-…). It's a desktop app built with Tauri, developed and tested on Linux, with `.deb` and `.AppImage` packages for Ubuntu 22.04, Debian 12 and newer. Progress is tracked step by step in [`PLAN.md`](PLAN.md), and [`CHANGELOG.md`](CHANGELOG.md) says what each step added.
 
+<img width="1574" height="723" alt="image" src="https://github.com/user-attachments/assets/4012a1b3-13d5-420e-9d66-7a26220c1e5c" />
+
+
 ## What works
 
 | AIM | AIMtrix on Matrix |
